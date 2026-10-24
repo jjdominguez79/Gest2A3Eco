@@ -577,6 +577,40 @@ class ClientInvoiceLine(Base):
     )
     line_total: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=Decimal("0"))
     vat_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=Decimal("0"))
+    # Referencia de origen (no es FK ni fuente de verdad): los valores de la
+    # linea ya son una copia del articulo en el momento de anadirla. Editar
+    # el articulo despues nunca altera lineas ya copiadas (ADR 0001, Etapa 4).
+    catalog_item_id: Mapped[str] = mapped_column(String(36), default="")
+
+
+class ClientCatalogItem(Base):
+    """Articulo del catalogo de productos/servicios de una organizacion."""
+    __tablename__ = "client_catalog_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True,
+    )
+    # product | service
+    item_type: Mapped[str] = mapped_column(String(10), default="service")
+    code: Mapped[str] = mapped_column(String(40), default="")
+    description: Mapped[str] = mapped_column(Text)
+    unit: Mapped[str] = mapped_column(String(20), default="")
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(15, 4), default=Decimal("0"))
+    vat_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("21.00"))
+    withholding_rate: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=Decimal("0"),
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    # Se incrementa en cada actualizacion; permite detectar ediciones
+    # concurrentes desde Flutter sin bloquear la emision de facturas.
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
 
 
 class ClientInvoiceEvent(Base):

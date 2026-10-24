@@ -285,6 +285,7 @@ def _invoice_to_dict(inv: ClientInvoice, lines: list[ClientInvoiceLine] | None =
                 "vat_rate": str(l.vat_rate),
                 "line_total": str(l.line_total),
                 "vat_amount": str(l.vat_amount),
+                "catalog_item_id": l.catalog_item_id or None,
             }
             for l in sorted(lines, key=lambda x: x.line_number)
         ]
@@ -332,6 +333,40 @@ def _configured_online_series(
             detail="Gestinem aun no ha configurado la serie de facturacion online",
         )
     return series
+
+
+def _build_invoice_line(
+    db: Session, organization_id: str, invoice_id: str, line_number: int, ld: dict,
+) -> ClientInvoiceLine:
+    """Construye una linea a partir del payload, copiando el catalogo si se indica.
+
+    Si ``catalog_item_id`` esta presente, descripcion/precio/IVA se copian del
+    articulo en este momento (snapshot); una edicion posterior del articulo
+    nunca altera esta linea (ADR 0001, Etapa 4).
+    """
+    from backend.api.client_catalog_service import copy_catalog_item_to_line
+    from backend.api.client_models import ClientCatalogItem
+
+    line = ClientInvoiceLine(
+        invoice_id=invoice_id,
+        line_number=line_number,
+        description=ld.get("description", ""),
+        quantity=Decimal(str(ld.get("quantity", "1"))),
+        unit_price=Decimal(str(ld.get("unit_price", "0"))),
+        discount_percent=Decimal(str(ld.get("discount_percent", "0"))),
+        vat_rate=Decimal(str(ld.get("vat_rate", "21.00"))),
+    )
+
+    catalog_item_id = ld.get("catalog_item_id")
+    if catalog_item_id:
+        item = db.get(ClientCatalogItem, catalog_item_id)
+        if not item or item.organization_id != organization_id:
+            raise HTTPException(
+                status_code=400, detail="Articulo de catalogo no encontrado",
+            )
+        copy_catalog_item_to_line(item, line)
+
+    return line
 
 
 # ===== CONFIGURACION =====
@@ -508,15 +543,7 @@ def create_draft(
     lines_data = payload.get("lines", [])
     lines = []
     for i, ld in enumerate(lines_data, 1):
-        line = ClientInvoiceLine(
-            invoice_id=inv.id,
-            line_number=i,
-            description=ld.get("description", ""),
-            quantity=Decimal(str(ld.get("quantity", "1"))),
-            unit_price=Decimal(str(ld.get("unit_price", "0"))),
-            discount_percent=Decimal(str(ld.get("discount_percent", "0"))),
-            vat_rate=Decimal(str(ld.get("vat_rate", "21.00"))),
-        )
+        line = _build_invoice_line(db, client.organization_id, inv.id, i, ld)
         db.add(line)
         lines.append(line)
 
@@ -589,15 +616,7 @@ def update_draft(
 
         lines = []
         for i, ld in enumerate(payload["lines"], 1):
-            line = ClientInvoiceLine(
-                invoice_id=inv.id,
-                line_number=i,
-                description=ld.get("description", ""),
-                quantity=Decimal(str(ld.get("quantity", "1"))),
-                unit_price=Decimal(str(ld.get("unit_price", "0"))),
-                discount_percent=Decimal(str(ld.get("discount_percent", "0"))),
-                vat_rate=Decimal(str(ld.get("vat_rate", "21.00"))),
-            )
+            line = _build_invoice_line(db, client.organization_id, inv.id, i, ld)
             db.add(line)
             lines.append(line)
 

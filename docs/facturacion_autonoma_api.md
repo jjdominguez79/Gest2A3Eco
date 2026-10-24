@@ -12,7 +12,7 @@ Prefijo comun: `/api/v1/messaging/client/invoicing`.
 | GET/POST/PUT/DELETE | `/drafts`, `/drafts/{id}` | existente | CRUD de borradores |
 | POST | `/drafts/{id}/issue` | **Etapa 3: bloqueo por escritorio eliminado** | header `Idempotency-Key` obligatorio; `pending_desktop_import`/`desktop_subcuenta` ya no condicionan la emision |
 | GET | `/invoices`, `/invoices/{id}` | existente | **Etapa 2** anade los 5 estados separados a la respuesta |
-| GET/POST | `/catalog/items` | **Etapa 4 (nuevo)** | catalogo de productos/servicios |
+| GET/POST | `/catalog/items`, `/catalog/items/{id}` (GET/PUT/DELETE) | **Etapa 4, implementado** | CRUD de catalogo (`backend/api/client_catalog_api.py`); `DELETE` es baja logica (`active=false`); busqueda por `q`, paginacion `offset`/`limit` |
 | POST | `/invoices/{id}/rectify` | **Etapa 7 (nuevo)** | crea factura rectificativa referenciando la original |
 | POST | `/invoices/{id}/cancel` | **Etapa 7 (nuevo)** | registro de anulacion cuando corresponda |
 | GET | `/invoices/combined` | **Etapa 10 (nuevo)** | listado unificado `client_app` + `desktop` (desktop solo lectura) |
@@ -49,6 +49,10 @@ encargo).
 | POST | `/worker/accounting/{id}/confirm` | **Etapa 3, implementado**: `create_accounting_export` completado; idempotente |
 | POST | `/worker/accounting/{id}/error` | **Etapa 3, implementado**: libera para reintento o marca `review_required`; nunca toca `invoice_status`/`fiscal_status`/`pdf_status`/`delivery_status` |
 | POST | `/worker/desktop-invoices/sync` | **Etapa 10 (nuevo)**: proyecta cabeceras de facturas desktop |
+
+Las lineas de borrador aceptan `catalog_item_id` opcional: si se indica, el
+backend copia descripcion/precio/IVA del articulo a la linea en ese momento
+(snapshot); una edicion posterior del articulo nunca altera la linea.
 
 ## 4. Reglas de autoria (sin cambios, confirmadas en el codigo)
 

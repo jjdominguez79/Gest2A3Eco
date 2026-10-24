@@ -67,6 +67,7 @@ from backend.api.mail_api import router as mail_router
 from backend.api.client_profile_api import router as client_profile_router
 from backend.api.client_documents_api import router as client_documents_router
 from backend.api.client_invoices_api import router as client_invoices_router
+from backend.api.client_catalog_api import router as client_catalog_router
 from backend.api.client_certificates_api import router as client_certificates_router
 from backend.api.subvenciones_api import (
     admin_router as subvenciones_admin_router,
@@ -119,6 +120,7 @@ app.include_router(mail_router)
 app.include_router(client_profile_router)
 app.include_router(client_documents_router)
 app.include_router(client_invoices_router)
+app.include_router(client_catalog_router)
 app.include_router(client_certificates_router)
 app.include_router(subvenciones_router)
 app.include_router(subvenciones_admin_router)
