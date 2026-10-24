@@ -480,10 +480,33 @@ class ClientInvoice(Base):
     # Fechas
     invoice_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # Estado
-    # draft | issued_pending_processing | claimed | imported | rendered |
-    # emailed | processing_error | cancelled | replaced
+    # Estado legacy (se conserva por compatibilidad; no usar para logica
+    # nueva). draft | issued_pending_processing | claimed | imported |
+    # rendered | emailed | processing_error | cancelled | replaced
     status: Mapped[str] = mapped_column(String(30), default="draft", index=True)
+
+    # Estados separados (ADR 0001, Etapa 2): nunca mezclar emision, estado
+    # fiscal, PDF, entrega y contabilidad en una sola senal.
+    invoice_status: Mapped[str] = mapped_column(
+        String(20), default="draft", server_default="draft", index=True,
+    )
+    fiscal_status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending", index=True,
+    )
+    pdf_status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending", index=True,
+    )
+    delivery_status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending", index=True,
+    )
+    accounting_sync_status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending", index=True,
+    )
+    # client_app | desktop. Hoy todas las filas de esta tabla son client_app;
+    # las facturas desktop se proyectan en una tabla distinta (Etapa 10).
+    source_system: Mapped[str] = mapped_column(
+        String(20), default="client_app", server_default="client_app", index=True,
+    )
 
     # Importes (recalculados por el backend al emitir)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=Decimal("0"))
@@ -620,6 +643,79 @@ class ClientInvoiceProcessingQueue(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow,
     )
+
+
+class ClientInvoiceAccountingQueue(Base):
+    """Outbox contable independiente, exclusivo de invoice_worker (desktop).
+
+    Deliberadamente separado de ``ClientInvoiceProcessingQueue`` (exclusivo
+    de billing_worker): un error aqui solo puede mover
+    ``ClientInvoice.accounting_sync_status``, nunca el estado fiscal, el PDF
+    ni la entrega. Ver ADR 0001, seccion 5.
+    """
+    __tablename__ = "client_invoice_accounting_queue"
+    __table_args__ = (
+        UniqueConstraint("invoice_id", name="uq_client_inv_acc_queue_invoice"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    invoice_id: Mapped[str] = mapped_column(
+        ForeignKey("client_invoices.id", ondelete="CASCADE"), index=True,
+    )
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True,
+    )
+
+    # pending | claimed | imported | review_required | completed | error
+    queue_status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, default=5)
+
+    claimed_by: Mapped[str] = mapped_column(String(120), default="")
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True,
+    )
+
+    desktop_tercero_id: Mapped[str] = mapped_column(String(64), default="")
+    desktop_subcuenta: Mapped[str] = mapped_column(String(20), default="")
+    desktop_invoice_ref: Mapped[str] = mapped_column(String(64), default="")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
+class ClientInvoiceDiscrepancy(Base):
+    """Discrepancia de datos fiscales entre el backend y el escritorio.
+
+    Nunca sobrescribe en silencio ni bloquea facturas ya emitidas: solo
+    registra el desacuerdo para revision manual (ADR 0001, seccion 3/5).
+    """
+    __tablename__ = "client_invoice_discrepancies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), index=True,
+    )
+    customer_id: Mapped[str] = mapped_column(
+        ForeignKey("client_invoice_customers.id", ondelete="CASCADE"), index=True,
+    )
+    field_name: Mapped[str] = mapped_column(String(60))
+    backend_value: Mapped[str] = mapped_column(Text, default="")
+    desktop_value: Mapped[str] = mapped_column(Text, default="")
+    # open | reviewed | dismissed
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow,
+    )
+    reviewed_by: Mapped[str] = mapped_column(String(120), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ==========================================================================

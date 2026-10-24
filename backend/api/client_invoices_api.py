@@ -253,6 +253,12 @@ def _invoice_to_dict(inv: ClientInvoice, lines: list[ClientInvoiceLine] | None =
         "invoice_number": inv.invoice_number,
         "invoice_date": inv.invoice_date.isoformat() if inv.invoice_date else None,
         "status": inv.status,
+        "invoice_status": inv.invoice_status,
+        "fiscal_status": inv.fiscal_status,
+        "pdf_status": inv.pdf_status,
+        "delivery_status": inv.delivery_status,
+        "accounting_sync_status": inv.accounting_sync_status,
+        "source_system": inv.source_system,
         "customer_id": inv.customer_id,
         "subtotal": str(inv.subtotal),
         "total_vat": str(inv.total_vat),
@@ -696,6 +702,7 @@ def issue_invoice(
     inv.invoice_number = number
     inv.idempotency_key = idempotency_key
     inv.status = "issued_pending_processing"
+    inv.invoice_status = "issued"
     inv.issued_at = utcnow()
 
     if not inv.invoice_date:
