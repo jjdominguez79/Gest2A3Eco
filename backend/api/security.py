@@ -147,6 +147,30 @@ def require_document_publisher(x_api_key: str = Header(default="")) -> str:
     return require_workstation_or_internal(x_api_key)
 
 
+def require_billing_worker_or_internal(
+    x_api_key: str = Header(default=""),
+) -> str:
+    """Acepta la credencial exclusiva de billing_worker o la clave interna.
+
+    Nunca acepta un token de puesto de escritorio (``g2a3_wks_``): a partir
+    de la Etapa 5, el pipeline fiscal/PDF/entrega es exclusivo de
+    billing_worker (ADR 0001, seccion 4/12). invoice_worker ya no reclama en
+    estos endpoints.
+    """
+    settings = get_settings()
+    expected = getattr(settings, "billing_worker_api_key", "")
+    if expected and secrets.compare_digest(x_api_key, expected):
+        return "billing-worker"
+    if settings.internal_api_key and secrets.compare_digest(
+        x_api_key, settings.internal_api_key,
+    ):
+        return "gest2a3eco"
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Credencial de billing_worker no valida",
+    )
+
+
 def require_master_sync_or_workstation_internal(
     x_api_key: str = Header(default=""),
 ) -> str:

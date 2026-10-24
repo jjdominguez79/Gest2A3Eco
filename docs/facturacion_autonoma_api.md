@@ -17,11 +17,12 @@ Prefijo comun: `/api/v1/messaging/client/invoicing`.
 | POST | `/invoices/{id}/cancel` | **Etapa 7 (nuevo)** | registro de anulacion cuando corresponda |
 | GET | `/invoices/combined` | **Etapa 10 (nuevo)** | listado unificado `client_app` + `desktop` (desktop solo lectura) |
 
-## 2. `billing_worker` (credencial exclusiva `BILLING_WORKER_API_KEY`, Etapa 3/5)
+## 2. `billing_worker` (credencial exclusiva `BILLING_WORKER_API_KEY`, implementado en la Etapa 5)
 
-Reemplaza el uso que hace hoy `require_workstation_or_internal` en estos
-endpoints. El worker de escritorio deja de llamarlos (seccion 16 del
-encargo).
+Desde la Etapa 5, estos endpoints exigen `require_billing_worker_or_internal`
+(nunca un token de puesto `g2a3_wks_...`). El worker de escritorio ya no los
+llama (seccion 16 del encargo); `invoice_worker` usa en su lugar
+`/worker/accounting/*` (ver seccion 3).
 
 | Metodo | Ruta | Job type |
 |---|---|---|
@@ -33,7 +34,9 @@ encargo).
 | POST | `/worker/invoice/{id}/send-fcm` | `send_notification`, idempotente |
 | POST | `/worker/invoice/{id}/error` | libera el lease, incrementa `retry_count` |
 | GET | `/worker/invoice/{id}/status` | estado agregado |
-| GET | `/worker/notification-health` | entregas `sending`/`unknown` &gt; 30 min |
+| POST | `/worker/billing/heartbeat` | **Etapa 5, nuevo**: latido periodico (`worker_heartbeats`) |
+| GET | `/worker/notification-health` | entregas `sending`/`unknown` &gt; 30 min (`require_internal_key`) |
+| GET | `/worker/heartbeats` | **Etapa 5, nuevo**: ultimo latido de billing_worker/invoice_worker (`require_internal_key`) |
 | POST | `/worker/invoice/{id}/fiscal-register` | **Etapa 7 (nuevo)**: `fiscal_registration` |
 | POST | `/worker/invoice/{id}/fiscal-cancel` | **Etapa 7 (nuevo)**: `fiscal_cancellation` |
 
@@ -48,6 +51,7 @@ encargo).
 | POST | `/worker/accounting/claim` | **Etapa 3, implementado**: reclama `ClientInvoiceAccountingQueue` (`SELECT FOR UPDATE SKIP LOCKED`) |
 | POST | `/worker/accounting/{id}/confirm` | **Etapa 3, implementado**: `create_accounting_export` completado; idempotente |
 | POST | `/worker/accounting/{id}/error` | **Etapa 3, implementado**: libera para reintento o marca `review_required`; nunca toca `invoice_status`/`fiscal_status`/`pdf_status`/`delivery_status` |
+| POST | `/worker/accounting/heartbeat` | **Etapa 5, nuevo**: latido periodico de `invoice_worker` |
 | POST | `/worker/desktop-invoices/sync` | **Etapa 10 (nuevo)**: proyecta cabeceras de facturas desktop |
 
 Las lineas de borrador aceptan `catalog_item_id` opcional: si se indica, el

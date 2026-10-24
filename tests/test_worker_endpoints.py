@@ -44,6 +44,7 @@ from backend.api.messaging_models import (
 )
 from backend.api.messaging_security import hash_token
 from backend.api.security import (
+    require_billing_worker_or_internal,
     require_master_sync_or_workstation_internal,
     require_workstation_or_internal,
 )
@@ -72,6 +73,7 @@ def _setup():
 
     app.dependency_overrides[_db] = override
     app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
+    app.dependency_overrides[require_billing_worker_or_internal] = lambda: "test"
     app.dependency_overrides[require_master_sync_or_workstation_internal] = (
         lambda: "test"
     )

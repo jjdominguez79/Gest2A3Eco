@@ -1,0 +1,14 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "deploy/billing-worker/Dockerfile"
+# Reconstruir solo cuando cambia el paquete billing_worker o su imagen; no
+# al publicar una nueva version de la app de escritorio o de Flutter.
+watchPatterns = ["billing_worker/**", "deploy/billing-worker/**"]
+
+[deploy]
+startCommand = "python -m billing_worker"
+# No expone puerto ni API publica (seccion 10 del encargo): es un proceso
+# de polling continuo, sin healthcheckPath HTTP. Railway lo supervisa por
+# codigo de salida del proceso.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

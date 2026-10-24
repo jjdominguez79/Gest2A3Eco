@@ -155,6 +155,27 @@ class Workstation(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WorkerHeartbeat(Base):
+    """Ultimo latido conocido de un worker cloud/desktop (observabilidad).
+
+    Una fila por nombre de worker (``billing_worker``, ``invoice_worker``),
+    no por instancia/replica: el objetivo es saber si hay al menos una
+    instancia viva, no inventariar replicas (ADR 0001, seccion 10/22).
+    """
+    __tablename__ = "worker_heartbeats"
+
+    worker_name: Mapped[str] = mapped_column(String(60), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(120), default="")
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    jobs_processed_total: Mapped[int] = mapped_column(Integer, default=0)
+    jobs_failed_total: Mapped[int] = mapped_column(Integer, default=0)
+    status_detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
 class DesktopAdminSession(Base):
     """Sesion temporal de administrador del escritorio (1 hora de validez)."""
     __tablename__ = "desktop_admin_sessions"

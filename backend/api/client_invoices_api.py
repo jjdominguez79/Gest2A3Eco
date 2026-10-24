@@ -67,9 +67,11 @@ from backend.api.messaging_models import (
     MessagingOrganization,
     MessagingSession,
 )
+from backend.api.models import WorkerHeartbeat
 from backend.api import messaging_firebase, messaging_mail
 from backend.api.messaging_security import hash_token, is_expired, utcnow
 from backend.api.security import (
+    require_billing_worker_or_internal,
     require_internal_key,
     require_master_sync_or_workstation_internal,
     require_workstation_or_internal,
@@ -819,7 +821,7 @@ def get_invoice(invoice_id: str, request: Request, db: Session = Depends(_db)):
 def worker_claim(
     payload: dict = Body(...),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Reclama la siguiente factura pendiente de procesamiento."""
     worker_id = payload.get("worker_id", "unknown")
@@ -870,7 +872,7 @@ def worker_claim(
 def worker_get_payload(
     invoice_id: str,
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Descarga datos completos de factura para el worker."""
     inv = db.get(ClientInvoice, invoice_id)
@@ -963,7 +965,7 @@ async def worker_upload_pdf(
     file: UploadFile = File(...),
     sha256: str = Form(...),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Sube el PDF renderizado por el worker a Azure y marca rendered."""
     import hashlib
@@ -1046,7 +1048,7 @@ def worker_report_error(
     invoice_id: str,
     payload: dict = Body(...),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Reporta un error de procesamiento reintentable."""
     inv = db.get(ClientInvoice, invoice_id)
@@ -1083,7 +1085,7 @@ def worker_publish_document(
     invoice_id: str,
     payload: dict = Body(...),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Crea el ClientDocument a partir del PDF ya almacenado en blob."""
     from backend.api.client_models import ClientDocument
@@ -1138,7 +1140,7 @@ def worker_mark_emailed(
     invoice_id: str,
     payload: dict | None = Body(default=None),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Marca la factura como emailed tras envio real por Graph."""
     inv = db.get(ClientInvoice, invoice_id)
@@ -1178,7 +1180,7 @@ def worker_send_email(
     invoice_id: str,
     payload: dict | None = Body(default=None),
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Envia email con la factura via Graph. Idempotente por estado."""
     inv = db.get(ClientInvoice, invoice_id)
@@ -1357,7 +1359,7 @@ def worker_send_email(
 def worker_send_fcm(
     invoice_id: str,
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Envia notificacion FCM al emisor. Best-effort, no bloquea."""
     inv = db.get(ClientInvoice, invoice_id)
@@ -1523,7 +1525,7 @@ def worker_notification_health(
 def worker_get_status(
     invoice_id: str,
     db: Session = Depends(_db),
-    _auth: str = Depends(require_workstation_or_internal),
+    _auth: str = Depends(require_billing_worker_or_internal),
 ):
     """Consulta el estado de procesamiento de una factura."""
     inv = db.get(ClientInvoice, invoice_id)
@@ -1937,3 +1939,69 @@ def worker_accounting_error(
     )
     db.commit()
     return {"status": "ok", "retryable": retryable}
+
+
+# ===== OBSERVABILIDAD: HEARTBEAT DE WORKERS =====
+
+
+def _record_heartbeat(
+    db: Session, worker_name: str, payload: dict,
+) -> dict:
+    row = db.get(WorkerHeartbeat, worker_name)
+    now = utcnow()
+    if not row:
+        row = WorkerHeartbeat(worker_name=worker_name)
+        db.add(row)
+    row.instance_id = str(payload.get("instance_id") or "")[:120]
+    row.last_seen_at = now
+    row.jobs_processed_total = int(payload.get("jobs_processed_total") or 0)
+    row.jobs_failed_total = int(payload.get("jobs_failed_total") or 0)
+    row.status_detail = str(payload.get("status_detail") or "")[:2000]
+    row.updated_at = now
+    db.commit()
+    return {"status": "ok", "worker_name": worker_name, "last_seen_at": now.isoformat()}
+
+
+@router.post("/worker/billing/heartbeat")
+def worker_billing_heartbeat(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_billing_worker_or_internal),
+):
+    """Latido periodico de billing_worker (cloud, pipeline fiscal/PDF/entrega)."""
+    return _record_heartbeat(db, "billing_worker", payload)
+
+
+@router.post("/worker/accounting/heartbeat")
+def worker_accounting_heartbeat(
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Latido periodico de invoice_worker (escritorio, importacion contable)."""
+    return _record_heartbeat(db, "invoice_worker", payload)
+
+
+@router.get("/worker/heartbeats")
+def list_worker_heartbeats(
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_internal_key),
+):
+    """Observabilidad: ultimo latido conocido de cada worker (seccion 22)."""
+    rows = db.scalars(select(WorkerHeartbeat)).all()
+    return {
+        "workers": [
+            {
+                "worker_name": r.worker_name,
+                "instance_id": r.instance_id,
+                "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+                "jobs_processed_total": r.jobs_processed_total,
+                "jobs_failed_total": r.jobs_failed_total,
+                "status_detail": r.status_detail,
+                "seconds_since_last_seen": (
+                    (utcnow() - r.last_seen_at).total_seconds() if r.last_seen_at else None
+                ),
+            }
+            for r in rows
+        ],
+    }

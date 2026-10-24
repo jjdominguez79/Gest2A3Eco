@@ -149,7 +149,10 @@ def _make_app(pg_factory):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from backend.api.client_invoices_api import _db, router
-    from backend.api.security import require_workstation_or_internal
+    from backend.api.security import (
+        require_billing_worker_or_internal,
+        require_workstation_or_internal,
+    )
 
     app = FastAPI()
     app.include_router(router)
@@ -160,6 +163,7 @@ def _make_app(pg_factory):
 
     app.dependency_overrides[_db] = override
     app.dependency_overrides[require_workstation_or_internal] = lambda: "test"
+    app.dependency_overrides[require_billing_worker_or_internal] = lambda: "test"
     return TestClient(app, raise_server_exceptions=False)
 
 
