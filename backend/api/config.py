@@ -129,6 +129,11 @@ class Settings:
     aapp_notifications_worker_api_key: str
     client_master_sync_api_key: str
     billing_worker_api_key: str
+    # Interruptor global unico (sin AND por organizacion: es una cuestion de
+    # preparacion tecnica del software, no una decision comercial por
+    # cliente). Debe permanecer en false hasta completar y validar la
+    # Etapa 7 (ADR 0001, seccion 9/14). No activar en produccion todavia.
+    verifactu_submission_enabled: bool
     # Permitir almacenamiento local como fallback (solo para tests/desarrollo)
     client_documents_allow_local_storage: bool
 
@@ -351,6 +356,9 @@ def get_settings() -> Settings:
         ).strip(),
         client_master_sync_api_key=os.getenv("CLIENT_MASTER_SYNC_API_KEY", ""),
         billing_worker_api_key=os.getenv("BILLING_WORKER_API_KEY", "").strip(),
+        verifactu_submission_enabled=os.getenv(
+            "VERIFACTU_SUBMISSION_ENABLED", "false",
+        ).strip().lower() in {"1", "true", "yes", "si"},
         client_documents_allow_local_storage=os.getenv(
             "CLIENT_DOCUMENTS_ALLOW_LOCAL_STORAGE", "false",
         ).strip().lower() in {"1", "true", "yes", "si"},

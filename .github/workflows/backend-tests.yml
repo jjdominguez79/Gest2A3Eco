@@ -18,6 +18,10 @@ on:
       - "tests/test_feature_flags.py"
       - "tests/test_worker_endpoints.py"
       - "tests/test_notification_concurrency_pg.py"
+      - "tests/test_invoice_*.py"
+      - "tests/test_billing_worker*.py"
+      - "billing_worker/**"
+      - "deploy/billing-worker/**"
       - ".github/workflows/backend-tests.yml"
   pull_request:
     paths:
@@ -34,6 +38,10 @@ on:
       - "tests/test_feature_flags.py"
       - "tests/test_worker_endpoints.py"
       - "tests/test_notification_concurrency_pg.py"
+      - "tests/test_invoice_*.py"
+      - "tests/test_billing_worker*.py"
+      - "billing_worker/**"
+      - "deploy/billing-worker/**"
       - ".github/workflows/backend-tests.yml"
 
 jobs:
@@ -68,7 +76,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r backend/requirements.txt pytest pytest-asyncio
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio responses segno
+      - run: playwright install --with-deps chromium
       - name: Ejecutar pruebas backend
         run: >-
           pytest
@@ -87,11 +96,22 @@ jobs:
           tests/test_client_profile_api.py
           tests/test_client_documents_api.py
           tests/test_client_certificates_api.py
+          tests/test_client_catalog_api.py
+          tests/test_client_invoice_separated_states.py
           tests/test_dehu_postgres_migration.py
           tests/test_client_invoices_api.py
           tests/test_feature_flags.py
           tests/test_worker_endpoints.py
           tests/test_notification_concurrency_pg.py
+          tests/test_invoice_issuance_decoupled.py
+          tests/test_invoice_numbering_concurrency_pg.py
+          tests/test_invoice_pdf_pipeline_integration.py
+          tests/test_billing_worker.py
+          tests/test_billing_worker_backend_client.py
+          tests/test_billing_worker_config.py
+          tests/test_billing_worker_security.py
+          tests/test_billing_worker_fiscal_qr.py
+          tests/test_billing_worker_render_pdf.py
           --junitxml=backend-test-results.xml
           --tb=short
           -ra

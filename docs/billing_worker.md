@@ -116,10 +116,40 @@ Servicio nuevo e independiente del backend web, mismo repositorio:
 hay esquema propio que revertir: el worker no posee ninguna tabla: toda su
 persistencia es la del backend.
 
-## Pendiente (Etapa 6 y siguientes)
+## Renderer PDF (Etapa 6)
 
-- `render_pdf.py` es todavia un placeholder sin Chromium (Etapa 6 lo
-  sustituye por el renderer real HTML/CSS + Playwright + QR fiscal).
-- `fiscal_registration`/`fiscal_cancellation` (Etapa 7): el worker todavia
-  no envia nada a la AEAT; ver `docs/adr/0001-facturacion-autonoma-cliente.md`
+`billing_worker/handlers/render_pdf.py` genera el PDF con una plantilla
+HTML/CSS propia (`billing_worker/templates/invoice.html`, Jinja2) renderizada
+con Chromium headless (Playwright, mismo patron que
+`deploy/aapp-worker/Dockerfile`). Sin Word, sin LibreOffice. Contiene
+emisor, destinatario, serie y numero, fechas, lineas, cantidades, precios,
+descuentos, bases por tipo de IVA, retencion, total, forma de pago, QR y
+texto fiscal, identificador de software.
+
+El QR y el texto legal dependen de `verifactu_submission_enabled`
+(payload de `/worker/invoice/{id}/payload`, reflejo del ajuste global
+`VERIFACTU_SUBMISSION_ENABLED` del backend):
+
+- **Activo** (todavia no, pendiente de la Etapa 7): QR con la URL oficial
+  de validacion AEAT (`billing_worker/handlers/fiscal_qr.py`) y la frase
+  "Factura verificable en la sede electronica de la AEAT - VERI*FACTU".
+- **Inactivo** (estado actual): QR con una referencia interna propia (nunca
+  una URL de la AEAT para un registro que no se ha enviado) y un texto que
+  declara expresamente que el documento no esta acogido a VERI*FACTU
+  todavia. Ver seccion 9/14 del ADR 0001: nunca se declara cumplimiento
+  mientras falte la validacion real.
+
+La descarga autenticada desde Flutter usa el PDF ya publicado como
+`ClientDocument` (`GET /client/invoicing/invoices/{id}/pdf` en el backend,
+reutilizando `ClientDocumentStorage`; el worker no sirve descargas).
+
+## Pendiente (Etapa 7 y siguientes)
+
+- `fiscal_registration`/`fiscal_cancellation`: el worker todavia no envia
+  nada a la AEAT; ver `docs/adr/0001-facturacion-autonoma-cliente.md`
   seccion 9 para el alcance declarado de Veri*FACTU.
+- El formato del QR AEAT (`fiscal_qr.py`) se ha contrastado contra multiples
+  fuentes publicas que citan el RD 1007/2023 y la Orden HAC/1177/2024, pero
+  no contra el texto integro de la norma ni contra un entorno de pruebas
+  AEAT real; se trata como pendiente de validacion final antes de activar
+  `VERIFACTU_SUBMISSION_ENABLED`.

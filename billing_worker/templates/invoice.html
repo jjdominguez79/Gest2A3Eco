@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Factura {{ factura.display_number }}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Helvetica", "Arial", sans-serif;
+    font-size: 10.5pt;
+    color: #1a1a1a;
+    margin: 0;
+  }
+  h1 { font-size: 16pt; margin: 0 0 2mm 0; }
+  h2 { font-size: 11pt; margin: 0 0 1mm 0; color: #444; }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 2px solid #1a1a1a;
+    padding-bottom: 4mm;
+    margin-bottom: 6mm;
+  }
+  .parties {
+    display: flex;
+    justify-content: space-between;
+    gap: 8mm;
+    margin-bottom: 6mm;
+  }
+  .party { width: 48%; }
+  .party p { margin: 0 0 1mm 0; line-height: 1.35; }
+  table.lines {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 5mm;
+  }
+  table.lines th, table.lines td {
+    border: 1px solid #ccc;
+    padding: 2mm 2mm;
+    text-align: right;
+    font-size: 9.5pt;
+  }
+  table.lines th { background: #f0f0f0; text-align: center; }
+  table.lines td.description { text-align: left; }
+  .totals {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 6mm;
+  }
+  .totals table { border-collapse: collapse; width: 70mm; }
+  .totals td { padding: 1.2mm 2mm; font-size: 10pt; }
+  .totals tr.total td { font-weight: bold; font-size: 12pt; border-top: 1.5px solid #1a1a1a; }
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-top: 1px solid #ccc;
+    padding-top: 4mm;
+    margin-top: 8mm;
+  }
+  .footer .qr-block { text-align: center; width: 32mm; }
+  .footer .qr-block img { width: 28mm; height: 28mm; }
+  .footer .qr-block p { font-size: 7.5pt; margin: 1mm 0 0 0; line-height: 1.2; }
+  .footer .legal { max-width: 110mm; font-size: 8pt; color: #333; line-height: 1.35; }
+  .meta { font-size: 9.5pt; color: #444; }
+  .payment { margin: 0 0 6mm 0; font-size: 10pt; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Factura {{ factura.display_number }}</h1>
+      <p class="meta">Fecha de emision: {{ factura.invoice_date_display }}</p>
+    </div>
+    <div class="meta" style="text-align:right;">
+      <p>Software: {{ factura.software_id }}</p>
+      <p>Emitida desde la plataforma de clientes</p>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="party">
+      <h2>Emisor</h2>
+      <p><strong>{{ emisor.legal_name }}</strong></p>
+      <p>NIF: {{ emisor.tax_id }}</p>
+      <p>{{ emisor.address }}</p>
+      <p>{{ emisor.postal_code }} {{ emisor.city }} ({{ emisor.province }}), {{ emisor.country }}</p>
+      {% if emisor.email %}<p>{{ emisor.email }}</p>{% endif %}
+      {% if emisor.phone %}<p>{{ emisor.phone }}</p>{% endif %}
+    </div>
+    <div class="party">
+      <h2>Destinatario</h2>
+      <p><strong>{{ cliente.legal_name }}</strong></p>
+      <p>NIF: {{ cliente.tax_id }}</p>
+      <p>{{ cliente.address }}</p>
+      <p>{{ cliente.postal_code }} {{ cliente.city }} ({{ cliente.province }}), {{ cliente.country }}</p>
+      {% if cliente.email %}<p>{{ cliente.email }}</p>{% endif %}
+    </div>
+  </div>
+
+  <table class="lines">
+    <thead>
+      <tr>
+        <th style="text-align:left;">Descripcion</th>
+        <th>Cantidad</th>
+        <th>Precio unidad</th>
+        <th>Dto. %</th>
+        <th>Base</th>
+        <th>IVA %</th>
+        <th>Cuota IVA</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lineas %}
+      <tr>
+        <td class="description">{{ line.description }}</td>
+        <td>{{ line.quantity }}</td>
+        <td>{{ line.unit_price }} {{ factura.currency }}</td>
+        <td>{{ line.discount_percent }}</td>
+        <td>{{ line.line_total }} {{ factura.currency }}</td>
+        <td>{{ line.vat_rate }}</td>
+        <td>{{ line.vat_amount }} {{ factura.currency }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if iva_breakdown %}
+  <table class="lines" style="width: 60mm; margin-left: auto;">
+    <thead><tr><th>Tipo IVA</th><th>Base</th><th>Cuota</th></tr></thead>
+    <tbody>
+      {% for item in iva_breakdown %}
+      <tr>
+        <td>{{ item.rate }}%</td>
+        <td>{{ item.base }} {{ factura.currency }}</td>
+        <td>{{ item.amount }} {{ factura.currency }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <p class="payment">Forma de pago: {{ factura.payment_method or "No especificada" }}</p>
+
+  <div class="totals">
+    <table>
+      <tr><td>Base imponible</td><td>{{ factura.subtotal }} {{ factura.currency }}</td></tr>
+      <tr><td>Cuota IVA</td><td>{{ factura.total_vat }} {{ factura.currency }}</td></tr>
+      {% if factura.withholding_rate and factura.withholding_rate != "0.00" %}
+      <tr><td>Retencion ({{ factura.withholding_rate }}%)</td><td>-{{ factura.withholding_amount }} {{ factura.currency }}</td></tr>
+      {% endif %}
+      <tr class="total"><td>Total</td><td>{{ factura.total }} {{ factura.currency }}</td></tr>
+    </table>
+  </div>
+
+  {% if factura.notes %}
+  <p class="meta">Observaciones: {{ factura.notes }}</p>
+  {% endif %}
+
+  <div class="footer">
+    <div class="legal">
+      <p>{{ legal_phrase }}</p>
+    </div>
+    <div class="qr-block">
+      <img src="{{ qr_data_uri }}" alt="QR">
+      <p>{{ qr_caption }}</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -800,6 +800,43 @@ def list_invoices(
     }
 
 
+@router.get("/invoices/{invoice_id}/pdf")
+def download_invoice_pdf(invoice_id: str, request: Request, db: Session = Depends(_db)):
+    """Descarga autenticada del PDF ya publicado por billing_worker.
+
+    Seccion 19 del encargo: Flutter debe poder descargar el PDF de una
+    factura emitida. Reutiliza ClientDocumentStorage sin introducir un
+    almacenamiento nuevo (ADR 0001, seccion 12).
+    """
+    from backend.api.client_models import ClientDocument
+
+    client = _authenticated_client(request, db)
+    _require_invoicing_enabled(db, client.organization_id)
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv or inv.organization_id != client.organization_id:
+        raise HTTPException(status_code=404)
+    if not inv.document_id:
+        raise HTTPException(
+            status_code=409,
+            detail="El PDF de esta factura todavia no se ha generado",
+        )
+
+    doc = db.get(ClientDocument, inv.document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+    storage = _get_storage()
+    content = storage.get(doc.blob_key)
+    return Response(
+        content=content,
+        media_type=doc.content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{doc.file_name}"',
+            "Content-Length": str(len(content)),
+        },
+    )
+
+
 @router.get("/invoices/{invoice_id}")
 def get_invoice(invoice_id: str, request: Request, db: Session = Depends(_db)):
     client = _authenticated_client(request, db)
@@ -917,6 +954,12 @@ def worker_get_payload(
             "email": org.email or "",
         }
     result["issued_snapshot"] = inv.issued_snapshot
+    from backend.api.config import get_settings
+    # El renderer solo puede imprimir el QR/texto VERI*FACTU real cuando la
+    # remision fiscal esta activa de verdad (ADR 0001, seccion 9/14). Con el
+    # flag en false, el PDF debe mostrar una referencia interna, nunca una
+    # URL de validacion de la AEAT para un registro que nunca se envio.
+    result["verifactu_submission_enabled"] = get_settings().verifactu_submission_enabled
 
     # Push tokens del cliente emisor para FCM
     push_tokens = []
