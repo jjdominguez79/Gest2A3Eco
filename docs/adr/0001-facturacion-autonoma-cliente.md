@@ -220,33 +220,78 @@ estado/origen. Se sigue el patron ya validado en `invoicing_screen.dart` /
 "Reintentar" + `ref.invalidate`); no existe un widget de estado generico
 reutilizable hoy, asi que no se introduce uno nuevo fuera de alcance.
 
-## 9. Veri\*FACTU: alcance y limite declarado
+## 9. Veri\*FACTU: alcance, lo implementado y el limite declarado
 
-Se implementa el motor en `services/verifactu/` (mismo patron que
-`services/facturae/`: `models.py`, `builder.py`, `validator.py`, `schemas/`
-con procedencia documentada) con:
+Implementado en `services/verifactu/` (mismo patron que `services/facturae/`:
+`models.py`, `builder.py`, `adapter.py`, `hash.py`, `README.md` con
+procedencia documentada):
 
-- Encadenamiento real por obligado tributario/SIF (tabla nueva
-  `client_verifactu_chain_state`, con bloqueo de fila al anadir un registro),
-  corrigiendo el encadenamiento contra cadena vacia.
-- Generacion de XML UTF-8 y QR segun el formato publico de verificacion de
-  la AEAT (URL + NIF emisor + numero+serie + fecha + importe).
-- Interfaz `AeatSubmissionPort` aislada y un adaptador *null* (no transmite)
-  para que el resto del sistema sea comprobable sin credenciales reales.
-- Pruebas contractuales sobre la forma del XML, el hash y el encadenamiento.
+- **Huella/hash real**, verificada contra el documento oficial AEAT
+  "Detalle de las especificaciones tecnicas para generacion de la huella o
+  hash de los registros de facturacion" (v0.1.2, 27/08/2024): algoritmo
+  SHA-256, orden exacto de campos, formato de concatenacion. Los 3 ejemplos
+  oficiales del documento se reproducen byte a byte en
+  `tests/test_verifactu_hash.py` (vectores de prueba de oro).
+- **Encadenamiento real por organizacion** (= un obligado tributario/SIF en
+  este sistema): tabla `client_verifactu_chain_state`, bloqueada con
+  `SELECT ... FOR UPDATE` al anadir un registro (mismo patron que
+  `assign_invoice_number`), corrigiendo el encadenamiento contra cadena
+  vacia de todas las facturas. El registro fiscal inicial (huella + XML) se
+  crea dentro de la misma transaccion de emision (seccion 9 del encargo,
+  punto 10), en `client_invoice_service.append_verifactu_alta`.
+- **XML del registro** (`RegistroAlta`/`RegistroAnulacion`), con nombres de
+  elemento y jerarquia transcritos de ejemplos reales del documento oficial
+  "Sistemas Informaticos de Facturacion" v1.0.3 (namespaces SOAP/XSD
+  incluidos). UTF-8.
+- **Rectificativas y anulaciones** (seccion 15): `POST
+  .../invoices/{id}/rectify` crea una factura nueva (`TipoFactura=R1`) que
+  referencia a la original via `rectifies_invoice_id`; la original pasa a
+  `invoice_status=rectified` sin editarse. `POST .../invoices/{id}/cancel`
+  genera un `RegistroAnulacion` propio (columnas separadas
+  `verifactu_anulacion_hash`/`verifactu_anulacion_xml`: nunca sobrescribe el
+  registro de alta original) y marca `invoice_status=cancelled`; es
+  idempotente.
+- Interfaz `AeatSubmissionPort` aislada y `NullAeatAdapter` (nunca
+  transmite, siempre devuelve `incident`, nunca `accepted`) para que el
+  resto del sistema sea comprobable sin credenciales reales. Expuesto via
+  `POST /worker/invoice/{id}/fiscal-register` (billing_worker, job type
+  `fiscal_registration`): mientras `VERIFACTU_SUBMISSION_ENABLED=false` es
+  un no-op barato (el backend decide, el worker no necesita el flag).
+  `fiscal_cancellation` como job de worker separado no se ha implementado
+  todavia: la anulacion calcula su huella/XML de forma sincrona en el mismo
+  endpoint de cancelacion (igual que el alta en la emision); el envio real
+  de esa anulacion a la AEAT queda pendiente junto con el resto de la
+  conexion real.
+- Pruebas contractuales de la forma del XML
+  (`tests/test_verifactu_builder.py`), del encadenamiento end-to-end
+  (`tests/test_verifactu_chain_integration.py`) y de concurrencia real
+  contra PostgreSQL (`tests/test_verifactu_chain_concurrency_pg.py`, gated
+  por `TEST_POSTGRES_URL`, igual que la numeracion de series).
 
 **Queda expresamente pendiente y sin activar** (feature flag
-`VERIFACTU_SUBMISSION_ENABLED=false` permanente hasta que se complete):
+`VERIFACTU_SUBMISSION_ENABLED=false` permanente hasta que se complete; ver
+`services/verifactu/README.md` para el detalle exacto):
 
-- Validacion contra el XSD/contrato oficial descargado de fuente AEAT
-  verificada (no se incorpora un XSD sin poder confirmar su procedencia).
+- Validacion contra el XSD/contrato oficial completo (`SuministroLR.xsd` /
+  `SuministroInformacion.xsd`): no se ha descargado ni incorporado en esta
+  sesion.
+- El listado oficial completo de codigos `TipoFactura` (lista L2 del anexo
+  de la orden): solo se usan `F1` y `R1`, los unicos necesarios aqui.
 - Conexion real contra los servicios AEAT (requiere credenciales de entorno
-  de pruebas que no estan disponibles en esta sesion).
-- Firma/sellado especifico si el canal elegido lo exige.
+  de pruebas que no estan disponibles en esta sesion) y la firma
+  electronica de los registros (documento AEAT aparte, no descargado).
+- La posicion exacta del elemento `PrimerRegistro` en el arbol XML: el
+  documento oficial confirma su existencia y semantica por texto, pero el
+  diagrama correspondiente no se pudo renderizar en esta sesion; se ha
+  implementado como alternativa directa a `RegistroAnterior` dentro de
+  `Encadenamiento`, que es la lectura mas directa del texto disponible.
 
 No se declara en ningun documento que Veri\*FACTU este "completo" ni
 "certificado" mientras lo anterior siga pendiente, conforme exige el
-encargo.
+encargo. Lo que SI se declara, con evidencia verificable (vectores de
+prueba oficiales reproducidos exactamente), es que el algoritmo de huella y
+el encadenamiento ya no son el placeholder contra cadena vacia que existia
+antes de esta etapa.
 
 ## 10. Railway: dos servicios
 

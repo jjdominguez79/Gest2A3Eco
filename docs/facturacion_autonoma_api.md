@@ -14,8 +14,8 @@ Prefijo comun: `/api/v1/messaging/client/invoicing`.
 | GET | `/invoices`, `/invoices/{id}` | existente | **Etapa 2** anade los 5 estados separados a la respuesta |
 | GET | `/invoices/{id}/pdf` | **Etapa 6, nuevo** | descarga autenticada (sesion de cliente, org-scoped); 409 si `document_id` todavia no existe |
 | GET/POST | `/catalog/items`, `/catalog/items/{id}` (GET/PUT/DELETE) | **Etapa 4, implementado** | CRUD de catalogo (`backend/api/client_catalog_api.py`); `DELETE` es baja logica (`active=false`); busqueda por `q`, paginacion `offset`/`limit` |
-| POST | `/invoices/{id}/rectify` | **Etapa 7 (nuevo)** | crea factura rectificativa referenciando la original |
-| POST | `/invoices/{id}/cancel` | **Etapa 7 (nuevo)** | registro de anulacion cuando corresponda |
+| POST | `/invoices/{id}/rectify` | **Etapa 7, implementado** | header `Idempotency-Key`; crea una factura nueva (`TipoFactura=R1`) con `rectifies_invoice_id`; la original pasa a `invoice_status=rectified` (`status=replaced` legacy), nunca se edita |
+| POST | `/invoices/{id}/cancel` | **Etapa 7, implementado** | registro de anulacion (`RegistroAnulacion`) encadenado contra el ultimo hash; idempotente; la original nunca se modifica |
 | GET | `/invoices/combined` | **Etapa 10 (nuevo)** | listado unificado `client_app` + `desktop` (desktop solo lectura) |
 
 ## 2. `billing_worker` (credencial exclusiva `BILLING_WORKER_API_KEY`, implementado en la Etapa 5)
@@ -38,8 +38,7 @@ llama (seccion 16 del encargo); `invoice_worker` usa en su lugar
 | POST | `/worker/billing/heartbeat` | **Etapa 5, nuevo**: latido periodico (`worker_heartbeats`) |
 | GET | `/worker/notification-health` | entregas `sending`/`unknown` &gt; 30 min (`require_internal_key`) |
 | GET | `/worker/heartbeats` | **Etapa 5, nuevo**: ultimo latido de billing_worker/invoice_worker (`require_internal_key`) |
-| POST | `/worker/invoice/{id}/fiscal-register` | **Etapa 7 (nuevo)**: `fiscal_registration` |
-| POST | `/worker/invoice/{id}/fiscal-cancel` | **Etapa 7 (nuevo)**: `fiscal_cancellation` |
+| POST | `/worker/invoice/{id}/fiscal-register` | **Etapa 7, implementado**: `fiscal_registration`. No-op mientras `VERIFACTU_SUBMISSION_ENABLED=false` (estado actual); con el flag activo usa `NullAeatAdapter` y nunca marca `accepted` |
 
 ## 3. `invoice_worker` desktop (credencial de puesto, sin cambios de transporte)
 

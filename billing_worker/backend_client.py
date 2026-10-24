@@ -51,6 +51,16 @@ class BillingBackendClient:
         response.raise_for_status()
         return response.json()
 
+    def fiscal_register(self, invoice_id: str) -> dict:
+        """fiscal_registration (Etapa 7). No-op mientras el flag este off."""
+        response = self.http.post(
+            self._url(f"/worker/invoice/{invoice_id}/fiscal-register"),
+            headers=self._headers,
+            timeout=self.config.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def upload_pdf(self, invoice_id: str, content: bytes, sha256: str) -> dict:
         response = self.http.post(
             self._url(f"/worker/invoice/{invoice_id}/pdf"),

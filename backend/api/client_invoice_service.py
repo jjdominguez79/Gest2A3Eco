@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+from collections import defaultdict
 from decimal import Decimal
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from backend.api.client_models import (
     ClientInvoiceLine,
     ClientInvoiceProcessingQueue,
     ClientInvoiceSeries,
+    ClientVerifactuChainState,
 )
 from backend.api.client_validation import (
     calculate_line_total,
@@ -26,6 +28,15 @@ from backend.api.client_validation import (
 )
 from backend.api.messaging_models import MessagingOrganization
 from backend.api.messaging_security import utcnow
+from services.verifactu.builder import build_registro_alta, build_registro_anulacion
+from services.verifactu.models import (
+    AltaRegistroInput,
+    AnulacionRegistroInput,
+    DesgloseIva,
+    SistemaInformatico,
+)
+
+_MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 
 def recalculate_invoice(
@@ -170,23 +181,166 @@ def create_issued_snapshot(
     return json.dumps(snapshot, ensure_ascii=True, sort_keys=True)
 
 
-def compute_verifactu_hash(invoice: ClientInvoice, lines: list[ClientInvoiceLine]) -> str:
-    """Calcula hash SHA-256 para preparacion Veri*FACTU.
+def _display_num_serie(invoice: ClientInvoice) -> str:
+    return f"{invoice.series_code}-{int(invoice.invoice_number or 0):06d}"
 
-    En V1 solo prepara la estructura; no hay remision real a AEAT.
-    """
-    data = (
-        f"{invoice.organization_id}|{invoice.fiscal_year}|"
-        f"{invoice.series_code}|{invoice.invoice_number}|"
-        f"{invoice.invoice_date}|{invoice.total}|{invoice.software_id}"
+
+def _fecha_expedicion(invoice: ClientInvoice) -> str:
+    dt = invoice.invoice_date or invoice.issued_at or utcnow()
+    local = dt.astimezone(_MADRID_TZ)
+    return local.strftime("%d-%m-%Y")
+
+
+def _fecha_hora_huso_gen_registro() -> str:
+    return datetime.now(_MADRID_TZ).isoformat(timespec="seconds")
+
+
+def _build_desglose(lines: list[ClientInvoiceLine]) -> list[DesgloseIva]:
+    grouped: dict[Decimal, dict[str, Decimal]] = defaultdict(
+        lambda: {"base": Decimal("0"), "cuota": Decimal("0")},
     )
-    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+    for line in lines:
+        bucket = grouped[line.vat_rate]
+        bucket["base"] += line.line_total
+        bucket["cuota"] += line.vat_amount
+    return [
+        DesgloseIva(
+            tipo_impositivo=rate,
+            base_imponible=round_currency(data["base"]),
+            cuota_repercutida=round_currency(data["cuota"]),
+        )
+        for rate, data in sorted(grouped.items())
+    ]
 
 
-def chain_verifactu_hash(current_hash: str, previous_hash: str) -> str:
-    """Encadena hash actual con el anterior (Veri*FACTU)."""
-    combined = f"{previous_hash}|{current_hash}"
-    return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+def _lock_chain_state(db: Session, organization_id: str) -> ClientVerifactuChainState:
+    """Bloquea (o crea) la fila de estado de cadena de la organizacion.
+
+    SELECT ... FOR UPDATE: evita que dos emisiones concurrentes de la misma
+    organizacion encadenen contra el mismo hash "anterior" (ADR 0001,
+    seccion 9; mismo patron que assign_invoice_number para las series).
+    """
+    state = db.scalar(
+        select(ClientVerifactuChainState)
+        .where(ClientVerifactuChainState.organization_id == organization_id)
+        .with_for_update()
+    )
+    if not state:
+        state = ClientVerifactuChainState(organization_id=organization_id)
+        db.add(state)
+        db.flush()
+        state = db.scalar(
+            select(ClientVerifactuChainState)
+            .where(ClientVerifactuChainState.organization_id == organization_id)
+            .with_for_update()
+        )
+    return state
+
+
+def append_verifactu_alta(
+    db: Session,
+    invoice: ClientInvoice,
+    lines: list[ClientInvoiceLine],
+    customer: ClientInvoiceCustomer,
+    org: MessagingOrganization,
+    *,
+    tipo_factura: str = "F1",
+) -> tuple[str, str]:
+    """Calcula la huella real, construye el XML y encadena el registro.
+
+    Debe llamarse dentro de la misma transaccion que la emision (seccion 9
+    del encargo: "crear el registro fiscal inicial" es parte de la
+    transaccion de emision, no un paso diferido al worker). Devuelve
+    ``(huella, xml)``; tambien dejan actualizados
+    ``invoice.verifactu_hash``/``verifactu_chain_hash``/``verifactu_xml`` y
+    la fila de ``ClientVerifactuChainState``.
+    """
+    state = _lock_chain_state(db, org.id)
+    previous_hash = state.last_hash
+    num_serie = _display_num_serie(invoice)
+    fecha_expedicion = _fecha_expedicion(invoice)
+
+    sistema = SistemaInformatico(
+        nombre_razon=org.legal_name or org.name, nif=org.tax_id,
+    )
+    data = AltaRegistroInput(
+        id_emisor_factura=org.tax_id,
+        num_serie_factura=num_serie,
+        fecha_expedicion_factura=fecha_expedicion,
+        nombre_razon_emisor=org.legal_name or org.name,
+        tipo_factura=tipo_factura,
+        descripcion_operacion=invoice.notes or "Prestacion de servicios",
+        destinatario_nombre_razon=customer.legal_name,
+        destinatario_nif=customer.tax_id,
+        desglose=_build_desglose(lines),
+        cuota_total=invoice.total_vat,
+        importe_total=invoice.total,
+        sistema_informatico=sistema,
+        fecha_hora_huso_gen_registro=_fecha_hora_huso_gen_registro(),
+        huella_registro_anterior=previous_hash,
+        id_emisor_factura_anterior=org.tax_id if previous_hash else "",
+        num_serie_factura_anterior=state.last_num_serie,
+        fecha_expedicion_factura_anterior=state.last_fecha_expedicion,
+    )
+    huella, xml = build_registro_alta(data)
+
+    invoice.verifactu_hash = huella
+    invoice.verifactu_chain_hash = previous_hash
+    invoice.verifactu_xml = xml
+
+    state.last_hash = huella
+    state.last_invoice_id = invoice.id
+    state.last_num_serie = num_serie
+    state.last_fecha_expedicion = fecha_expedicion
+    state.sequence_number += 1
+    state.updated_at = utcnow()
+
+    return huella, xml
+
+
+def append_verifactu_anulacion(
+    db: Session,
+    invoice: ClientInvoice,
+    org: MessagingOrganization,
+) -> tuple[str, str]:
+    """Calcula la huella y el XML del registro de anulacion de una factura.
+
+    La anulacion es, en si misma, un nuevo registro de la cadena (se
+    encadena contra el ultimo hash conocido, que normalmente sera el de la
+    propia factura que se anula si no se ha emitido nada despues).
+    """
+    state = _lock_chain_state(db, org.id)
+    previous_hash = state.last_hash
+    num_serie = _display_num_serie(invoice)
+    fecha_expedicion = _fecha_expedicion(invoice)
+
+    sistema = SistemaInformatico(
+        nombre_razon=org.legal_name or org.name, nif=org.tax_id,
+    )
+    data = AnulacionRegistroInput(
+        id_emisor_factura_anulada=org.tax_id,
+        num_serie_factura_anulada=num_serie,
+        fecha_expedicion_factura_anulada=fecha_expedicion,
+        sistema_informatico=sistema,
+        fecha_hora_huso_gen_registro=_fecha_hora_huso_gen_registro(),
+        huella_registro_anterior=previous_hash,
+        id_emisor_factura_anterior=org.tax_id if previous_hash else "",
+        num_serie_factura_anterior=state.last_num_serie,
+        fecha_expedicion_factura_anterior=state.last_fecha_expedicion,
+    )
+    huella, xml = build_registro_anulacion(data)
+
+    state.last_hash = huella
+    # El registro de anulacion referencia la factura original, no se crea
+    # una factura nueva: el "ultimo registro" de la cadena pasa a ser esta
+    # anulacion, identificada por la misma factura.
+    state.last_invoice_id = invoice.id
+    state.last_num_serie = num_serie
+    state.last_fecha_expedicion = fecha_expedicion
+    state.sequence_number += 1
+    state.updated_at = utcnow()
+
+    return huella, xml
 
 
 def create_invoice_event(

@@ -79,6 +79,13 @@ class BillingWorker:
         worker se reinicia a mitad de la secuencia, el siguiente intento
         reanuda en el paso que falte, no desde el principio.
         """
+        # fiscal_registration (Etapa 7): no-op barato mientras
+        # VERIFACTU_SUBMISSION_ENABLED siga desactivado (el backend decide,
+        # el worker no necesita conocer el flag). Se llama primero porque,
+        # conceptualmente, el registro fiscal precede a su representacion
+        # en PDF.
+        self.backend.fiscal_register(invoice_id)
+
         status = self.backend.get_status(invoice_id)
 
         if not status.get("pdf_uploaded"):

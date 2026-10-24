@@ -9,11 +9,14 @@ Reclama trabajo de `ClientInvoiceProcessingQueue` via
 `POST /worker/claim` (el backend otorga el lease con
 `SELECT ... FOR UPDATE SKIP LOCKED`) y, por factura reclamada:
 
-1. Renderiza el PDF (`billing_worker/handlers/render_pdf.py`).
-2. Lo sube (`POST /worker/invoice/{id}/pdf`).
-3. Publica el documento en el area del cliente (`publish-document`).
-4. Dispara el envio por email (`send-email`, idempotente server-side).
-5. Dispara la notificacion FCM (`send-fcm`, best-effort: su fallo nunca
+1. Intenta el registro fiscal (`POST /worker/invoice/{id}/fiscal-register`,
+   Etapa 7). No-op barato mientras `VERIFACTU_SUBMISSION_ENABLED=false`
+   (estado actual): el backend decide, el worker no necesita el flag.
+2. Renderiza el PDF (`billing_worker/handlers/render_pdf.py`).
+3. Lo sube (`POST /worker/invoice/{id}/pdf`).
+4. Publica el documento en el area del cliente (`publish-document`).
+5. Dispara el envio por email (`send-email`, idempotente server-side).
+6. Dispara la notificacion FCM (`send-fcm`, best-effort: su fallo nunca
    hace fallar el trabajo).
 
 Cada paso comprueba el estado actual antes de repetirlo (idempotencia por

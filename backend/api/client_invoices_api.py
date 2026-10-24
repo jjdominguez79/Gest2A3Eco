@@ -31,9 +31,9 @@ from sqlalchemy.orm import Session
 _log = logging.getLogger(__name__)
 
 from backend.api.client_invoice_service import (
+    append_verifactu_alta,
+    append_verifactu_anulacion,
     assign_invoice_number,
-    chain_verifactu_hash,
-    compute_verifactu_hash,
     create_invoice_event,
     create_issued_snapshot,
     recalculate_invoice,
@@ -262,6 +262,9 @@ def _invoice_to_dict(inv: ClientInvoice, lines: list[ClientInvoiceLine] | None =
         "delivery_status": inv.delivery_status,
         "accounting_sync_status": inv.accounting_sync_status,
         "source_system": inv.source_system,
+        "rectifies_invoice_id": inv.rectifies_invoice_id,
+        "cancelled_at": inv.cancelled_at.isoformat() if inv.cancelled_at else None,
+        "cancellation_reason": inv.cancellation_reason,
         "customer_id": inv.customer_id,
         "subtotal": str(inv.subtotal),
         "total_vat": str(inv.total_vat),
@@ -731,9 +734,13 @@ def issue_invoice(
     # Snapshot inmutable
     inv.issued_snapshot = create_issued_snapshot(inv, lines, customer, org)
 
-    # Veri*FACTU (preparacion)
-    inv.verifactu_hash = compute_verifactu_hash(inv, lines)
-    inv.verifactu_chain_hash = chain_verifactu_hash(inv.verifactu_hash, "")
+    # Registro fiscal inicial Veri*FACTU: huella real encadenada contra el
+    # ultimo hash conocido de la organizacion (nunca contra cadena vacia,
+    # salvo el primer registro real). Parte de esta misma transaccion
+    # (seccion 9 del encargo). El envio real a la AEAT (fiscal_status) es
+    # responsabilidad de billing_worker y sigue desactivado (Etapa 7, ver
+    # services/verifactu/README.md).
+    append_verifactu_alta(db, inv, lines, customer, org)
 
     # Evento
     create_invoice_event(
@@ -849,6 +856,172 @@ def get_invoice(invoice_id: str, request: Request, db: Session = Depends(_db)):
         select(ClientInvoiceLine).where(ClientInvoiceLine.invoice_id == inv.id)
     ).all()
     return _invoice_to_dict(inv, list(lines))
+
+
+# ===== RECTIFICATIVAS Y ANULACIONES =====
+#
+# Seccion 15 del encargo: una factura emitida nunca se edita, nunca se
+# elimina y nunca vuelve a draft. Las correcciones son siempre un registro
+# fiscal nuevo (rectificativa o anulacion) que referencia al original.
+
+
+@router.post("/invoices/{invoice_id}/rectify")
+def rectify_invoice(
+    invoice_id: str,
+    request: Request,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+):
+    """Crea una factura rectificativa que referencia a la original.
+
+    La factura original nunca se modifica: solo se marca
+    invoice_status="rectified" (y, por compatibilidad, status="replaced").
+    """
+    client = _authenticated_client(request, db)
+    org = _require_invoicing_enabled(db, client.organization_id)
+
+    existing = db.scalar(
+        select(ClientInvoice).where(
+            ClientInvoice.idempotency_key == idempotency_key,
+            ClientInvoice.organization_id == client.organization_id,
+        )
+    )
+    if existing and existing.id != invoice_id:
+        ex_lines = db.scalars(
+            select(ClientInvoiceLine).where(ClientInvoiceLine.invoice_id == existing.id)
+        ).all()
+        return _invoice_to_dict(existing, list(ex_lines))
+
+    original = db.get(ClientInvoice, invoice_id)
+    if not original or original.organization_id != client.organization_id:
+        raise HTTPException(status_code=404)
+    if original.invoice_status not in ("issued", "rectified"):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se puede rectificar una factura emitida",
+        )
+
+    lines_data = payload.get("lines", [])
+    if not lines_data:
+        raise HTTPException(
+            status_code=400, detail="La rectificativa necesita al menos una linea",
+        )
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="El motivo es obligatorio")
+
+    customer = db.get(ClientInvoiceCustomer, original.customer_id)
+    if not customer:
+        raise HTTPException(status_code=400, detail="Cliente no encontrado")
+
+    configured_series = _configured_online_series(db, org.id, original.fiscal_year)
+
+    rect = ClientInvoice(
+        organization_id=client.organization_id,
+        customer_id=original.customer_id,
+        fiscal_year=original.fiscal_year,
+        series_code=configured_series.series_code,
+        status="issued_pending_processing",
+        invoice_status="issued",
+        payment_method=original.payment_method,
+        notes=f"Rectifica {original.series_code}-{original.invoice_number:06d}: {reason}",
+        recipient_email=original.recipient_email,
+        created_by_client_id=client.id,
+        rectifies_invoice_id=original.id,
+    )
+    db.add(rect)
+    db.flush()
+
+    lines = []
+    for i, ld in enumerate(lines_data, 1):
+        line = _build_invoice_line(db, client.organization_id, rect.id, i, ld)
+        db.add(line)
+        lines.append(line)
+
+    recalculate_invoice(rect, lines)
+    number = assign_invoice_number(db, org.id, rect.fiscal_year, rect.series_code)
+    rect.invoice_number = number
+    rect.idempotency_key = idempotency_key
+    rect.issued_at = utcnow()
+    rect.invoice_date = rect.issued_at
+
+    rect.issued_snapshot = create_issued_snapshot(rect, lines, customer, org)
+    append_verifactu_alta(db, rect, lines, customer, org, tipo_factura="R1")
+
+    create_invoice_event(
+        db, rect.id, "issued", "draft", "issued",
+        actor_type="client", actor_id=client.id, detail=reason,
+    )
+
+    old_status = original.invoice_status
+    original.invoice_status = "rectified"
+    original.status = "replaced"
+    create_invoice_event(
+        db, original.id, "rectified", old_status, "rectified",
+        actor_type="client", actor_id=client.id, detail=rect.id,
+    )
+
+    db.add(ClientInvoiceProcessingQueue(
+        invoice_id=rect.id, organization_id=org.id, queue_status="pending",
+    ))
+    db.add(ClientInvoiceAccountingQueue(
+        invoice_id=rect.id, organization_id=org.id, queue_status="pending",
+    ))
+
+    db.commit()
+    db.refresh(rect)
+    return _invoice_to_dict(rect, lines)
+
+
+@router.post("/invoices/{invoice_id}/cancel")
+def cancel_invoice(
+    invoice_id: str,
+    request: Request,
+    payload: dict = Body(...),
+    db: Session = Depends(_db),
+):
+    """Registra la anulacion fiscal de una factura emitida.
+
+    No borra ni modifica los datos originales: solo anade el registro de
+    anulacion y marca invoice_status="cancelled".
+    """
+    client = _authenticated_client(request, db)
+    org = _require_invoicing_enabled(db, client.organization_id)
+
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv or inv.organization_id != client.organization_id:
+        raise HTTPException(status_code=404)
+    if inv.invoice_status == "cancelled":
+        return _invoice_to_dict(inv)
+    if inv.invoice_status not in ("issued", "rectified"):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se puede anular una factura emitida",
+        )
+
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="El motivo es obligatorio")
+
+    huella, xml = append_verifactu_anulacion(db, inv, org)
+    inv.verifactu_anulacion_hash = huella
+    inv.verifactu_anulacion_xml = xml
+
+    old_status = inv.invoice_status
+    inv.invoice_status = "cancelled"
+    inv.status = "cancelled"
+    inv.cancelled_at = utcnow()
+    inv.cancellation_reason = reason
+    create_invoice_event(
+        db, inv.id, "cancelled", old_status, "cancelled",
+        actor_type="client", actor_id=client.id, detail=reason,
+        event_hash=huella,
+    )
+
+    db.commit()
+    db.refresh(inv)
+    return _invoice_to_dict(inv)
 
 
 # ===== WORKER ENDPOINTS =====
@@ -1084,6 +1257,51 @@ async def worker_upload_pdf(
         "blob_key": blob_key,
         "file_size": len(content),
     }
+
+
+@router.post("/worker/invoice/{invoice_id}/fiscal-register")
+def worker_fiscal_register(
+    invoice_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_billing_worker_or_internal),
+):
+    """fiscal_registration: intenta el envio real del registro de alta a la AEAT.
+
+    Mientras ``VERIFACTU_SUBMISSION_ENABLED`` sea false (ADR 0001, seccion
+    9/14; services/verifactu/README.md) esto es intencionalmente un no-op:
+    ``fiscal_status`` permanece en ``pending``. Nunca se marca ``accepted``
+    sin una respuesta real de la AEAT.
+    """
+    from backend.api.config import get_settings
+    from services.verifactu.adapter import NullAeatAdapter
+
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    if not get_settings().verifactu_submission_enabled:
+        return {"status": "skipped", "reason": "verifactu_submission_disabled"}
+
+    if inv.fiscal_status == "accepted":
+        return {"status": "ok", "fiscal_status": "accepted", "already_sent": True}
+
+    # Adaptador real pendiente (seccion 9): hoy solo existe el nulo, que
+    # nunca transmite nada y siempre devuelve "incident".
+    adapter = NullAeatAdapter()
+    old_status = inv.fiscal_status
+    inv.fiscal_status = "processing"
+    result = adapter.submit_alta(xml=inv.verifactu_xml, huella=inv.verifactu_hash)
+
+    inv.fiscal_status = result.status
+    inv.verifactu_fiscal_error = result.error_detail
+    if result.csv:
+        inv.verifactu_registration_id = result.csv
+    create_invoice_event(
+        db, inv.id, f"fiscal_{result.status}", old_status, result.status,
+        actor_type="worker", detail=result.error_detail,
+    )
+    db.commit()
+    return {"status": "ok", "fiscal_status": result.status}
 
 
 @router.post("/worker/invoice/{invoice_id}/error")

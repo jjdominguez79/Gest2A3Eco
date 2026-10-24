@@ -541,12 +541,31 @@ class ClientInvoice(Base):
         ForeignKey("client_documents.id", ondelete="SET NULL"),
     )
 
-    # Veri*FACTU: preparacion (sin remision real en V1)
+    # Veri*FACTU (Etapa 7): verifactu_hash es la huella real de ESTE
+    # registro (SHA-256, algoritmo verificado contra la especificacion
+    # oficial, ver services/verifactu/); verifactu_chain_hash es la huella
+    # del registro ANTERIOR contra la que se encadeno (vacia solo en el
+    # primer registro real de la cadena de la organizacion).
     verifactu_hash: Mapped[str] = mapped_column(String(64), default="")
     verifactu_chain_hash: Mapped[str] = mapped_column(String(64), default="")
     verifactu_qr_data: Mapped[str] = mapped_column(Text, default="")
     verifactu_registration_id: Mapped[str] = mapped_column(String(100), default="")
+    verifactu_xml: Mapped[str] = mapped_column(Text, default="")
+    verifactu_fiscal_error: Mapped[str] = mapped_column(Text, default="")
+    # Registro de anulacion (propio, nunca sobrescribe el de alta).
+    verifactu_anulacion_hash: Mapped[str] = mapped_column(String(64), default="")
+    verifactu_anulacion_xml: Mapped[str] = mapped_column(Text, default="")
     software_id: Mapped[str] = mapped_column(String(100), default="Gest2A3Eco")
+
+    # Rectificativas y anulaciones (seccion 15): una factura emitida nunca
+    # se edita ni se elimina. rectifies_invoice_id enlaza la rectificativa
+    # con la factura original; cancelled_at/cancellation_reason registran
+    # una anulacion sin borrar ni modificar los datos originales.
+    rectifies_invoice_id: Mapped[str | None] = mapped_column(
+        ForeignKey("client_invoices.id", ondelete="SET NULL"),
+    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancellation_reason: Mapped[str] = mapped_column(Text, default="")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow,
@@ -674,6 +693,29 @@ class ClientInvoiceProcessingQueue(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow,
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow,
+    )
+
+
+class ClientVerifactuChainState(Base):
+    """Ultimo hash real de la cadena Veri*FACTU de una organizacion.
+
+    Un obligado tributario/SIF = una organizacion en este sistema. Se
+    bloquea esta fila (SELECT FOR UPDATE) al anadir un registro nuevo para
+    que la cadena nunca se rompa bajo emision concurrente (ADR 0001,
+    seccion 9; ver services/verifactu/).
+    """
+    __tablename__ = "client_verifactu_chain_state"
+
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("msg_organizations.id", ondelete="CASCADE"), primary_key=True,
+    )
+    last_hash: Mapped[str] = mapped_column(String(64), default="")
+    last_invoice_id: Mapped[str] = mapped_column(String(36), default="")
+    last_num_serie: Mapped[str] = mapped_column(String(40), default="")
+    last_fecha_expedicion: Mapped[str] = mapped_column(String(10), default="")
+    sequence_number: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow,
     )

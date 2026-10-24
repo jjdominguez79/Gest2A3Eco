@@ -20,8 +20,11 @@ on:
       - "tests/test_notification_concurrency_pg.py"
       - "tests/test_invoice_*.py"
       - "tests/test_billing_worker*.py"
+      - "tests/test_verifactu*.py"
+      - "tests/test_worker_fiscal_register.py"
       - "billing_worker/**"
       - "deploy/billing-worker/**"
+      - "services/verifactu/**"
       - ".github/workflows/backend-tests.yml"
   pull_request:
     paths:
@@ -40,8 +43,11 @@ on:
       - "tests/test_notification_concurrency_pg.py"
       - "tests/test_invoice_*.py"
       - "tests/test_billing_worker*.py"
+      - "tests/test_verifactu*.py"
+      - "tests/test_worker_fiscal_register.py"
       - "billing_worker/**"
       - "deploy/billing-worker/**"
+      - "services/verifactu/**"
       - ".github/workflows/backend-tests.yml"
 
 jobs:
@@ -112,6 +118,12 @@ jobs:
           tests/test_billing_worker_security.py
           tests/test_billing_worker_fiscal_qr.py
           tests/test_billing_worker_render_pdf.py
+          tests/test_verifactu_hash.py
+          tests/test_verifactu_builder.py
+          tests/test_verifactu_adapter.py
+          tests/test_verifactu_chain_integration.py
+          tests/test_verifactu_chain_concurrency_pg.py
+          tests/test_worker_fiscal_register.py
           --junitxml=backend-test-results.xml
           --tb=short
           -ra

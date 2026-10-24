@@ -55,6 +55,10 @@ class _FakeBackend:
         self._claimed = True
         return {"claimed": True, "queue_id": "q-1", "invoice_id": self.invoice_id}
 
+    def fiscal_register(self, invoice_id):
+        self.calls.append("fiscal_register")
+        return {"status": "skipped", "reason": "verifactu_submission_disabled"}
+
     def get_status(self, invoice_id):
         self.calls.append("get_status")
         return {
@@ -115,8 +119,8 @@ def test_full_pipeline_renders_uploads_publishes_emails_and_notifies():
 
     assert processed is True
     assert backend.calls == [
-        "claim", "get_status", "get_payload", "upload_pdf", "get_status",
-        "publish_document", "send_email", "send_fcm",
+        "claim", "fiscal_register", "get_status", "get_payload", "upload_pdf",
+        "get_status", "publish_document", "send_email", "send_fcm",
     ]
     assert worker.jobs_processed_total == 1
     assert worker.jobs_failed_total == 0

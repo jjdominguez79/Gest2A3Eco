@@ -103,6 +103,18 @@ def test_report_error_truncates_long_messages():
 
 
 @responses.activate
+def test_fiscal_register_calls_expected_route():
+    responses.add(
+        responses.POST, f"{BASE}{PREFIX}/worker/invoice/inv-1/fiscal-register",
+        json={"status": "skipped", "reason": "verifactu_submission_disabled"},
+        status=200,
+    )
+    client = BillingBackendClient(_config())
+    result = client.fiscal_register("inv-1")
+    assert result["status"] == "skipped"
+
+
+@responses.activate
 def test_http_error_status_raises():
     responses.add(
         responses.GET, f"{BASE}{PREFIX}/worker/invoice/inv-1/status",
