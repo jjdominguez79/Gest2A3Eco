@@ -17,9 +17,10 @@ import threading
 import tkinter as tk
 import unicodedata
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
+from zoneinfo import ZoneInfo
 
 from views.notificaciones_theme import *  # noqa: F401,F403
 from views.treeview_sort import OrdenadorTreeview
@@ -71,6 +72,23 @@ def _combinar_solicitudes(*grupos: list[dict]) -> list[dict]:
                 vistos.add(solicitud_id)
             resultado.append(solicitud)
     return resultado
+
+
+def _formatear_fecha_espana(valor) -> str:
+    """Convierte una marca temporal UTC del backend a la hora de Espana."""
+    texto = str(valor or "").strip()
+    if not texto:
+        return ""
+    try:
+        instante = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+    except ValueError:
+        return texto
+    if instante.tzinfo is None:
+        # Las fechas centrales se almacenan en UTC. Algunos controladores de
+        # PostgreSQL antiguos pueden devolverlas sin el indicador de zona.
+        instante = instante.replace(tzinfo=timezone.utc)
+    local = instante.astimezone(ZoneInfo("Europe/Madrid"))
+    return local.strftime("%Y-%m-%d %H:%M")
 
 
 class UICertificadosObtenidos(ttk.Frame):
@@ -569,7 +587,7 @@ class UICertificadosObtenidos(ttk.Frame):
         cuerpo = (f"Adjunto el certificado solicitado.\n\n"
                   f"Cliente: {r.get('company_name') or r.get('company_code')}\n"
                   f"Tipo: {_label_tipo(r.get('certificate_type'))}\n"
-                  f"Fecha: {r.get('completed_at') or r.get('created_at') or ''}\n")
+                  f"Fecha: {_formatear_fecha_espana(r.get('completed_at') or r.get('created_at'))}\n")
         try:
             pdf = self._descargar_pdf(r)
         except Exception as exc:
@@ -921,8 +939,8 @@ class UICertificadosObtenidos(ttk.Frame):
                 r.get("issuing_organization") or "",
                 estado,
                 r.get("certificate_result") or r.get("error_message") or r.get("result_summary") or "",
-                (r.get("created_at") or "")[:16].replace("T", " "),
-                (r.get("completed_at") or "")[:16].replace("T", " "),
+                _formatear_fecha_espana(r.get("created_at")),
+                _formatear_fecha_espana(r.get("completed_at")),
                 "Si" if r.get("document_id") else "Resguardo" if r.get("receipt_document_id") else "-",
                 _label_area_cliente(r),
                 (

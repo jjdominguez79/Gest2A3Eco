@@ -4,6 +4,7 @@ import views.ui_certificados_obtenidos as modulo
 from views.ui_certificados_obtenidos import (
     UICertificadosObtenidos,
     _combinar_solicitudes,
+    _formatear_fecha_espana,
     _label_area_cliente,
     _label_cliente,
     _normalizar_busqueda,
@@ -38,6 +39,18 @@ def test_combina_listado_general_con_solicitudes_del_cliente_sin_duplicar():
         {"id": "compartida"},
         {"id": "antigua-oculta"},
     ]
+
+
+def test_fecha_solicitud_se_muestra_en_hora_espanola_de_verano():
+    assert _formatear_fecha_espana("2026-10-23T10:15:00+00:00") == "2026-10-23 12:15"
+
+
+def test_fecha_solicitud_se_muestra_en_hora_espanola_de_invierno():
+    assert _formatear_fecha_espana("2026-12-23T10:15:00Z") == "2026-12-23 11:15"
+
+
+def test_fecha_solicitud_antigua_sin_zona_se_interpreta_como_utc():
+    assert _formatear_fecha_espana("2026-10-23T10:15:00") == "2026-10-23 12:15"
 
 
 def test_preparacion_recupera_solicitud_antigua_que_requiere_revision(monkeypatch):
