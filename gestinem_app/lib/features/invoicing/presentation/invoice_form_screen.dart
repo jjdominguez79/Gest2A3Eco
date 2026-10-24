@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import 'invoice_line_editor.dart';
 import 'invoicing_providers.dart';
 
 /// Formulario para crear o editar un borrador de factura.
@@ -27,7 +28,7 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
   final _recipientEmail = TextEditingController();
   String _withholdingRate = '0';
 
-  List<_LineData> _lines = [_LineData()];
+  List<InvoiceLineData> _lines = [InvoiceLineData()];
 
   bool get _isEdit => widget.draftId != null;
 
@@ -54,15 +55,16 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
         _recipientEmail.text = draft.recipientEmail;
         _withholdingRate = draft.withholdingRate;
         _lines = draft.lines.isEmpty
-            ? [_LineData()]
+            ? [InvoiceLineData()]
             : draft.lines
                   .map(
-                    (l) => _LineData(
+                    (l) => InvoiceLineData(
                       description: l.description,
                       quantity: l.quantity,
                       unitPrice: l.unitPrice,
                       discountPercent: l.discountPercent,
                       vatRate: l.vatRate,
+                      catalogItemId: l.catalogItemId,
                     ),
                   )
                   .toList();
@@ -253,7 +255,8 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
                 IconButton(
                   icon: const Icon(Icons.add_circle_outline),
                   tooltip: 'Anadir linea',
-                  onPressed: () => setState(() => _lines.add(_LineData())),
+                  onPressed: () =>
+                      setState(() => _lines.add(InvoiceLineData())),
                 ),
               ],
             ),
@@ -261,12 +264,13 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
 
             // Lines
             for (var i = 0; i < _lines.length; i++)
-              _LineEditor(
+              InvoiceLineEditor(
                 key: ValueKey('line-$i'),
                 data: _lines[i],
                 index: i,
                 canRemove: _lines.length > 1,
                 onRemove: () => setState(() => _lines.removeAt(i)),
+                onChanged: () => setState(() {}),
               ),
 
             const SizedBox(height: 12),
@@ -357,140 +361,4 @@ class _CustomerSelector extends ConsumerWidget {
       },
     );
   }
-}
-
-/// Editor de una linea de factura.
-class _LineEditor extends StatelessWidget {
-  const _LineEditor({
-    super.key,
-    required this.data,
-    required this.index,
-    required this.canRemove,
-    required this.onRemove,
-  });
-
-  final _LineData data;
-  final int index;
-  final bool canRemove;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Text(
-                  'Linea ${index + 1}',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const Spacer(),
-                if (canRemove)
-                  IconButton(
-                    icon: const Icon(Icons.remove_circle_outline, size: 20),
-                    onPressed: onRemove,
-                  ),
-              ],
-            ),
-            TextFormField(
-              initialValue: data.description,
-              decoration: const InputDecoration(labelText: 'Concepto *'),
-              onChanged: (v) => data.description = v,
-              validator: (v) => v == null || v.trim().isEmpty
-                  ? 'El concepto es obligatorio'
-                  : null,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    initialValue: data.quantity,
-                    decoration: const InputDecoration(labelText: 'Cantidad'),
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    onChanged: (v) => data.quantity = v,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextFormField(
-                    initialValue: data.unitPrice,
-                    decoration: const InputDecoration(
-                      labelText: 'Precio unitario',
-                    ),
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    onChanged: (v) => data.unitPrice = v,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    initialValue: data.discountPercent,
-                    decoration: const InputDecoration(labelText: 'Dto %'),
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    onChanged: (v) => data.discountPercent = v,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: data.vatRate,
-                    decoration: const InputDecoration(labelText: 'IVA %'),
-                    items: const [
-                      DropdownMenuItem(value: '0', child: Text('0%')),
-                      DropdownMenuItem(value: '4.00', child: Text('4%')),
-                      DropdownMenuItem(value: '10.00', child: Text('10%')),
-                      DropdownMenuItem(value: '21.00', child: Text('21%')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) data.vatRate = v;
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Datos mutables de una linea de factura en edicion.
-class _LineData {
-  String description;
-  String quantity;
-  String unitPrice;
-  String discountPercent;
-  String vatRate;
-
-  _LineData({
-    this.description = '',
-    this.quantity = '1',
-    this.unitPrice = '0',
-    this.discountPercent = '0',
-    this.vatRate = '21.00',
-  });
-
-  Map<String, dynamic> toJson() => {
-    'description': description,
-    'quantity': quantity,
-    'unit_price': unitPrice,
-    'discount_percent': discountPercent,
-    'vat_rate': vatRate,
-  };
 }

@@ -207,18 +207,55 @@ Etapa 3: `draft_created`, `issued`, `fiscal_claimed`, `fiscal_sent`,
 con el motor fiscal (no antes: encadenar sin el motor real seria otra forma
 de "preparar campos sin cumplir", que es justo el problema que se corrige).
 
-## 8. Flutter: completar, no reescribir
+## 8. Flutter: completado, no reescrito (Etapa 9)
 
-`gestinem_app/lib/features/invoicing/` ya tiene 6 pantallas, modelos,
+`gestinem_app/lib/features/invoicing/` ya tenia 6 pantallas, modelos,
 repositorio Dio (via `ApiClient`/`apiClientProvider` existente, sin cliente
-HTTP nuevo) y tests. El trabajo de la Etapa 9 es, por tanto, de ampliacion
-sobre esa base: catalogo de productos/servicios, configuracion de serie y
-perfil fiscal, estados separados en la UI, rectificativas, listado combinado
-de facturas desktop (solo lectura) y los filtros por ejercicio/serie/cliente/
-estado/origen. Se sigue el patron ya validado en `invoicing_screen.dart` /
+HTTP nuevo) y tests antes de esta etapa. Se amplio sobre esa base, sin
+introducir ningun patron nuevo:
+
+- **Estados separados en la UI**: `ClientInvoice` incorpora
+  `invoiceStatus`/`fiscalStatus`/`pdfStatus`/`deliveryStatus`/
+  `accountingSyncStatus` (enums nuevos en `domain/invoice_status.dart`,
+  equivalentes a los 5 campos del backend). `InvoiceDetailScreen` los
+  muestra en una cuadricula de chips independientes y en avisos separados
+  ("Incidencia fiscal" vs "Pendiente de revision contable"): nunca se
+  presenta un problema contable como si fuera fiscal, conforme exige la
+  seccion 19 del encargo. El campo `status` legacy se conserva en el modelo
+  mientras el backend lo siga enviando, pero las pantallas nuevas ya no lo
+  usan para decidir que mostrar.
+- **Catalogo de productos/servicios**: `CatalogListScreen`/
+  `CatalogFormScreen` (CRUD, busqueda, baja logica) y un selector
+  (`invoice_line_editor.dart`, hoja inferior) para anadir un articulo del
+  catalogo a una linea de borrador o de rectificativa; los valores se copian
+  en ese momento (igual que hace el backend).
+- **PDF**: `InvoicePdfScreen` reutiliza el widget publico `PdfBytesPreview`
+  ya existente en `features/documents/` (mismo visor `pdfx`, mismo patron de
+  guardar con `file_picker`): no se duplica logica de visor de PDF.
+- **Rectificativas y anulaciones**: `RectifyInvoiceScreen` (crea una factura
+  nueva que referencia a la original, precargando sus lineas para
+  corregirlas) y un dialogo de anulacion con motivo obligatorio desde
+  `InvoiceDetailScreen`. Ambas acciones solo se ofrecen si
+  `invoice.canRectify`/`canCancel` (nunca sobre un borrador, una factura ya
+  anulada/rectificada, o una factura de origen `desktop`).
+- **Filtros**: la pestana "Emitidas" anade filtros por ejercicio y estado
+  (`invoiceListFiltersProvider`), reutilizando el endpoint
+  `GET /invoices?fiscal_year=&status=` ya existente. El filtro por
+  origen/serie/cliente llega con el listado combinado de la Etapa 10.
+- **Facturas de origen desktop**: `ClientInvoice.isReadOnlyFromDesktop`
+  (basado en `source_system`) oculta las acciones de edicion/rectificar/
+  anular y muestra un distintivo "Factura del escritorio (solo lectura)".
+  El listado combinado en si (Etapa 10) todavia no esta conectado: hoy
+  `source_system` siempre vale `client_app` porque el backend no proyecta
+  facturas desktop en `client_invoices` (por diseno, ver seccion 6); el
+  modelo Flutter ya esta listo para cuando la Etapa 10 lo exponga.
+
+Se sigue el patron ya validado en `invoicing_screen.dart` /
 `subvenciones_screen.dart` (`AsyncValue.when` + `apiErrorMessage` + boton
 "Reintentar" + `ref.invalidate`); no existe un widget de estado generico
 reutilizable hoy, asi que no se introduce uno nuevo fuera de alcance.
+`flutter analyze` y `flutter test` (301 tests) pasan sin avisos tras estos
+cambios.
 
 ## 9. Veri\*FACTU: alcance, lo implementado y el limite declarado
 

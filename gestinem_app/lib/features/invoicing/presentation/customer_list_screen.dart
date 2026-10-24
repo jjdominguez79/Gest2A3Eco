@@ -59,8 +59,12 @@ class _CustomerTile extends StatelessWidget {
       ),
       title: Text(customer.legalName),
       subtitle: Text(customer.taxId),
+      // pendingDesktopImport es solo un metadato contable: nunca impide
+      // crear borradores ni emitir facturas con este cliente (ADR 0001,
+      // seccion 5). El texto evita dar a entender que el cliente no esta
+      // disponible todavia.
       trailing: customer.pendingDesktopImport
-          ? const Chip(label: Text('Pendiente'))
+          ? const Chip(label: Text('Sincronizando con contabilidad'))
           : customer.active
           ? null
           : const Chip(label: Text('Inactivo')),

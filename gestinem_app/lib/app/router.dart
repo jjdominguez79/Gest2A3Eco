@@ -18,12 +18,16 @@ import '../features/messaging/presentation/client_detail_screen.dart';
 import '../features/messaging/presentation/clients_screen.dart';
 import '../features/messaging/presentation/invite_client_screen.dart';
 import '../features/messaging/presentation/invitation_content_screen.dart';
+import '../features/invoicing/presentation/catalog_form_screen.dart';
+import '../features/invoicing/presentation/catalog_list_screen.dart';
 import '../features/invoicing/presentation/customer_form_screen.dart';
 import '../features/invoicing/presentation/customer_list_screen.dart';
 import '../features/invoicing/presentation/invoice_detail_screen.dart';
 import '../features/invoicing/presentation/invoice_form_screen.dart';
+import '../features/invoicing/presentation/invoice_pdf_screen.dart';
 import '../features/invoicing/presentation/invoicing_screen.dart';
 import '../features/invoicing/presentation/issue_confirmation_screen.dart';
+import '../features/invoicing/presentation/rectify_invoice_screen.dart';
 import '../features/profile/presentation/about_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/company_profile/presentation/company_profile_change_request_screen.dart';
@@ -352,12 +356,35 @@ final routerProvider = Provider<GoRouter>((ref) {
             InvoiceDetailScreen(invoiceId: state.pathParameters['id']!),
       ),
       GoRoute(
+        path: '/invoicing/invoices/:id/pdf',
+        builder: (_, state) =>
+            InvoicePdfScreen(invoiceId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/invoicing/invoices/:id/rectify',
+        builder: (_, state) =>
+            RectifyInvoiceScreen(invoiceId: state.pathParameters['id']!),
+      ),
+      GoRoute(
         path: '/invoicing/customers',
         builder: (_, _) => const CustomerListScreen(),
       ),
       GoRoute(
         path: '/invoicing/customers/new',
         builder: (_, _) => const CustomerFormScreen(),
+      ),
+      GoRoute(
+        path: '/invoicing/catalog',
+        builder: (_, _) => const CatalogListScreen(),
+      ),
+      GoRoute(
+        path: '/invoicing/catalog/new',
+        builder: (_, _) => const CatalogFormScreen(),
+      ),
+      GoRoute(
+        path: '/invoicing/catalog/:id',
+        builder: (_, state) =>
+            CatalogFormScreen(itemId: state.pathParameters['id']!),
       ),
     ],
   );

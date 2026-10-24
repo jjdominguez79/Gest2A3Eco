@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -367,7 +369,9 @@ void main() {
 
   // -- Detalle factura --
   group('InvoiceDetailScreen', () {
-    testWidgets('muestra detalle con estado y totales', (tester) async {
+    testWidgets('muestra detalle con estados separados y totales', (
+      tester,
+    ) async {
       final invoice = ClientInvoice.fromJson({
         'id': 'inv-100',
         'fiscal_year': 2026,
@@ -375,6 +379,11 @@ void main() {
         'invoice_number': 7,
         'invoice_date': '2026-08-01',
         'status': 'emailed',
+        'invoice_status': 'issued',
+        'fiscal_status': 'pending',
+        'pdf_status': 'generated',
+        'delivery_status': 'sent',
+        'accounting_sync_status': 'pending',
         'customer_id': 'c-1',
         'subtotal': '1000.00',
         'total_vat': '210.00',
@@ -411,7 +420,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('WEB-000007'), findsOneWidget);
-      expect(find.text('Email enviado'), findsOneWidget);
+      // Estados separados: emision, PDF y entrega visibles por separado.
+      expect(find.text('Emitida'), findsOneWidget);
+      expect(find.text('Generado'), findsOneWidget);
+      expect(find.text('Enviado'), findsOneWidget);
       expect(find.text('2026-08-01'), findsOneWidget);
       expect(find.text('Transferencia'), findsOneWidget);
       expect(find.text('Servicio mensual'), findsOneWidget);
@@ -421,57 +433,78 @@ void main() {
       expect(find.textContaining('1060.00'), findsWidgets);
     });
 
-    testWidgets('factura con error muestra banner rojo', (tester) async {
-      final invoice = ClientInvoice.fromJson({
-        'id': 'inv-err',
-        'status': 'processing_error',
-        'customer_id': 'c-1',
-      });
+    testWidgets(
+      'incidencia fiscal se muestra sin confundirse con un problema contable',
+      (tester) async {
+        final invoice = ClientInvoice.fromJson({
+          'id': 'inv-err',
+          'status': 'processing_error',
+          'invoice_status': 'issued',
+          'fiscal_status': 'incident',
+          'accounting_sync_status': 'pending',
+          'customer_id': 'c-1',
+        });
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
-            invoiceDetailProvider(
-              'inv-err',
-            ).overrideWith((ref) async => invoice),
-          ],
-          child: const MaterialApp(
-            home: InvoiceDetailScreen(invoiceId: 'inv-err'),
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              sessionProvider.overrideWith(
+                (ref) => FakeSessionController(ref),
+              ),
+              invoiceDetailProvider(
+                'inv-err',
+              ).overrideWith((ref) async => invoice),
+            ],
+            child: const MaterialApp(
+              home: InvoiceDetailScreen(invoiceId: 'inv-err'),
+            ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      expect(find.text('Error'), findsOneWidget);
-      expect(find.byIcon(Icons.error_outline), findsOneWidget);
-    });
+        // Aparece tanto en el chip de estado fiscal como en el aviso.
+        expect(find.text('Incidencia fiscal'), findsWidgets);
+        expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+        // El aviso contable (distinto) no aparece: accounting_sync_status=pending.
+        expect(find.text('Pendiente de revision contable'), findsNothing);
+      },
+    );
 
-    testWidgets('factura en proceso muestra banner naranja', (tester) async {
-      final invoice = ClientInvoice.fromJson({
-        'id': 'inv-proc',
-        'status': 'claimed',
-        'customer_id': 'c-1',
-      });
+    testWidgets(
+      'problema contable se muestra sin afectar al estado fiscal',
+      (tester) async {
+        final invoice = ClientInvoice.fromJson({
+          'id': 'inv-acc',
+          'status': 'imported',
+          'invoice_status': 'issued',
+          'fiscal_status': 'accepted',
+          'accounting_sync_status': 'review_required',
+          'customer_id': 'c-1',
+        });
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
-            invoiceDetailProvider(
-              'inv-proc',
-            ).overrideWith((ref) async => invoice),
-          ],
-          child: const MaterialApp(
-            home: InvoiceDetailScreen(invoiceId: 'inv-proc'),
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              sessionProvider.overrideWith(
+                (ref) => FakeSessionController(ref),
+              ),
+              invoiceDetailProvider(
+                'inv-acc',
+              ).overrideWith((ref) async => invoice),
+            ],
+            child: const MaterialApp(
+              home: InvoiceDetailScreen(invoiceId: 'inv-acc'),
+            ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      expect(find.text('En proceso'), findsOneWidget);
-      expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
-    });
+        expect(find.text('Pendiente de revision contable'), findsOneWidget);
+        // El estado fiscal sigue siendo "Aceptado por la AEAT": ningun
+        // aviso fiscal se muestra.
+        expect(find.text('Incidencia fiscal'), findsNothing);
+      },
+    );
   });
 
   // -- Idempotencia de emision --
@@ -512,4 +545,280 @@ void main() {
       );
     });
   });
+
+  // -- Rectificativas y anulaciones (Etapa 7/9) --
+  group('InvoicingRepository rectify/cancel', () {
+    test('rectifyInvoice envia motivo, lineas e Idempotency-Key', () async {
+      final adapter = JsonAdapter({
+        'id': 'inv-rect',
+        'status': 'issued_pending_processing',
+        'invoice_status': 'issued',
+        'customer_id': 'c-1',
+        'rectifies_invoice_id': 'inv-orig',
+        'invoice_number': 2,
+        'series_code': 'APP',
+      });
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = adapter,
+        tokenProvider: () => testSession.token,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final repo = container.read(invoicingRepositoryProvider);
+      final result = await repo.rectifyInvoice(
+        'inv-orig',
+        reason: 'Precio incorrecto',
+        lines: [
+          {'description': 'Servicio corregido', 'quantity': '1', 'unit_price': '90'},
+        ],
+      );
+
+      expect(result.rectifiesInvoiceId, 'inv-orig');
+      expect(adapter.lastRequest!.path, '/client/invoicing/invoices/inv-orig/rectify');
+      expect(adapter.lastRequest!.headers.containsKey('Idempotency-Key'), true);
+      final body = adapter.lastRequest!.data as Map<String, dynamic>;
+      expect(body['reason'], 'Precio incorrecto');
+      expect((body['lines'] as List).single['description'], 'Servicio corregido');
+    });
+
+    test('cancelInvoice envia el motivo', () async {
+      final adapter = JsonAdapter({
+        'id': 'inv-1',
+        'status': 'cancelled',
+        'invoice_status': 'cancelled',
+        'cancellation_reason': 'Duplicada',
+        'customer_id': 'c-1',
+      });
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = adapter,
+        tokenProvider: () => testSession.token,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final repo = container.read(invoicingRepositoryProvider);
+      final result = await repo.cancelInvoice('inv-1', reason: 'Duplicada');
+
+      expect(result.invoiceStatus, InvoiceLifecycleStatus.cancelled);
+      expect(adapter.lastRequest!.path, '/client/invoicing/invoices/inv-1/cancel');
+      final body = adapter.lastRequest!.data as Map<String, dynamic>;
+      expect(body['reason'], 'Duplicada');
+    });
+  });
+
+  // -- Descarga de PDF --
+  group('InvoicingRepository.downloadInvoicePdf', () {
+    test('descarga los bytes del PDF desde la ruta esperada', () async {
+      final adapter = _BytesAdapter(Uint8List.fromList([0x25, 0x50, 0x44, 0x46]));
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = adapter,
+        tokenProvider: () => testSession.token,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final repo = container.read(invoicingRepositoryProvider);
+      final bytes = await repo.downloadInvoicePdf('inv-1');
+
+      expect(bytes, [0x25, 0x50, 0x44, 0x46]);
+      expect(adapter.lastPath, '/client/invoicing/invoices/inv-1/pdf');
+    });
+  });
+
+  // -- Catalogo de productos y servicios --
+  group('InvoicingRepository catalogo', () {
+    test('listCatalogItems envia busqueda y filtro de activos', () async {
+      final adapter = JsonAdapter({
+        'items': [
+          {'id': 'cat-1', 'item_type': 'service', 'description': 'Hora de consultoria'},
+        ],
+        'total': 1,
+      });
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = adapter,
+        tokenProvider: () => testSession.token,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final repo = container.read(invoicingRepositoryProvider);
+      final result = await repo.listCatalogItems(q: 'consultoria', active: true);
+
+      expect((result['items'] as List).length, 1);
+      expect(adapter.lastRequest!.queryParameters['q'], 'consultoria');
+      expect(adapter.lastRequest!.queryParameters['active'], true);
+    });
+
+    test('createCatalogItem envia item_type, descripcion y precio', () async {
+      final adapter = JsonAdapter({
+        'id': 'cat-new',
+        'item_type': 'product',
+        'description': 'Licencia anual',
+        'unit_price': '199.00',
+        'vat_rate': '21.00',
+        'withholding_rate': '0',
+        'active': true,
+        'revision': 1,
+      });
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = adapter,
+        tokenProvider: () => testSession.token,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+          apiClientProvider.overrideWithValue(api),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final repo = container.read(invoicingRepositoryProvider);
+      final item = await repo.createCatalogItem({
+        'item_type': 'product',
+        'description': 'Licencia anual',
+        'unit_price': '199.00',
+      });
+
+      expect(item.id, 'cat-new');
+      expect(item.isProduct, true);
+      expect(adapter.lastRequest!.path, '/client/invoicing/catalog/items');
+    });
+  });
+
+  // -- Facturas desktop: solo lectura --
+  group('ClientInvoice origen desktop', () {
+    test('una factura de origen desktop no se puede rectificar ni anular', () {
+      final invoice = ClientInvoice.fromJson({
+        'id': 'inv-desktop-1',
+        'status': 'emailed',
+        'invoice_status': 'issued',
+        'source_system': 'desktop',
+        'customer_id': 'c-1',
+      });
+
+      expect(invoice.isReadOnlyFromDesktop, true);
+      expect(invoice.canRectify, false);
+      expect(invoice.canCancel, false);
+    });
+
+    test('una factura client_app emitida si se puede rectificar y anular', () {
+      final invoice = ClientInvoice.fromJson({
+        'id': 'inv-app-1',
+        'status': 'emailed',
+        'invoice_status': 'issued',
+        'source_system': 'client_app',
+        'customer_id': 'c-1',
+      });
+
+      expect(invoice.isReadOnlyFromDesktop, false);
+      expect(invoice.canRectify, true);
+      expect(invoice.canCancel, true);
+    });
+  });
+
+  // -- Diseno responsive (seccion 19: web/movil) --
+  group('InvoicingScreen responsive', () {
+    testWidgets('no desborda en ancho movil estrecho', (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final adapter = JsonAdapter({'enabled': true, 'fiscal_year': 2026, 'series': []});
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = adapter,
+        tokenProvider: () => testSession.token,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+            apiClientProvider.overrideWithValue(api),
+            invoiceDraftsProvider.overrideWith((ref) async => []),
+          ],
+          child: const MaterialApp(home: InvoicingScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('no desborda en ancho de escritorio/web', (tester) async {
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final adapter = JsonAdapter({'enabled': true, 'fiscal_year': 2026, 'series': []});
+      final api = ApiClient(
+        dio: Dio(BaseOptions(baseUrl: 'https://example.test'))
+          ..httpClientAdapter = adapter,
+        tokenProvider: () => testSession.token,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionProvider.overrideWith((ref) => FakeSessionController(ref)),
+            apiClientProvider.overrideWithValue(api),
+            invoiceDraftsProvider.overrideWith((ref) async => []),
+          ],
+          child: const MaterialApp(home: InvoicingScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+  });
+}
+
+/// Adapter que devuelve bytes binarios fijos para cualquier peticion
+/// (simula la descarga del PDF).
+class _BytesAdapter implements HttpClientAdapter {
+  _BytesAdapter(this.bytes);
+  final Uint8List bytes;
+  String? lastPath;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    lastPath = options.path;
+    return ResponseBody.fromBytes(bytes, 200);
+  }
+
+  @override
+  void close({bool force = false}) {}
 }
