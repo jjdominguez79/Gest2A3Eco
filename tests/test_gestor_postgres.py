@@ -766,3 +766,52 @@ def test_upsert_ocr_persiste_fecha_contable_pagada_y_suplidos():
 
     assert "fecha_contable, pagada, suplidos, cuenta_suplidos" in conexion.sql
     assert conexion.params[10:14] == ("2026-08-12", 1, 12.0, "55509999")
+
+
+def test_advisory_lock_empresa_430_usa_pg_advisory_xact_lock():
+    """Seccion 17 del encargo: asignacion atomica de subcuentas 430.
+
+    Verifica que el metodo emite pg_advisory_xact_lock(hashtext(...)) con
+    una clave que incluye el codigo de empresa, para que dos empresas
+    distintas nunca compitan por el mismo lock.
+    """
+    class Conexion:
+        def execute(self, sql, params=None):
+            self.sql = sql
+            self.params = params
+            return _Resultado()
+
+        def commit(self):
+            pass
+
+    conexion = Conexion()
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    gestor.advisory_lock_empresa_430("TEST01")
+
+    assert "pg_advisory_xact_lock" in conexion.sql
+    assert "hashtext" in conexion.sql
+    assert conexion.params == ("subcuenta430:TEST01",)
+
+
+def test_advisory_lock_empresa_430_usa_claves_distintas_por_empresa():
+    class Conexion:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params=None):
+            self.calls.append(params)
+            return _Resultado()
+
+        def commit(self):
+            pass
+
+    conexion = Conexion()
+    gestor = object.__new__(GestorPostgres)
+    gestor.conn = conexion
+
+    gestor.advisory_lock_empresa_430("EMPRESA_A")
+    gestor.advisory_lock_empresa_430("EMPRESA_B")
+
+    assert conexion.calls[0] != conexion.calls[1]

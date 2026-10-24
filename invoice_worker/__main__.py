@@ -5,6 +5,10 @@ Incluye:
 - Rotacion de logs
 - Comprobaciones de arranque
 - Apagado controlado
+
+Desde la Etapa 8 (ADR 0001) este worker solo importa clientes y facturas a
+contabilidad: ya no genera PDF con Word, por lo que el arranque ya no
+comprueba Word COM ni plantillas .docx para el flujo APP.
 """
 
 from __future__ import annotations
@@ -98,29 +102,6 @@ def _preflight_checks(config: WorkerConfig) -> list[str]:
             "El worker no podra importar facturas al escritorio."
         )
 
-    # Comprobar directorio de plantillas Word
-    template_dir = Path(config.word_template_dir)
-    if not template_dir.exists():
-        warnings.append(
-            f"Directorio de plantillas no existe: {template_dir}"
-        )
-    else:
-        docx_files = list(template_dir.glob("*.docx"))
-        if not docx_files:
-            warnings.append(
-                f"No se encontraron plantillas .docx en {template_dir}"
-            )
-
-    # Comprobar Word COM (solo en Windows)
-    if sys.platform == "win32":
-        try:
-            import comtypes.client  # noqa: F401
-        except ImportError:
-            warnings.append(
-                "comtypes no instalado; "
-                "la generacion de PDF con Word COM no funcionara"
-            )
-
     # Comprobar endpoint /health
     try:
         import requests
@@ -137,9 +118,9 @@ def _preflight_checks(config: WorkerConfig) -> list[str]:
 
 
 def _dry_run(config: WorkerConfig) -> None:
-    """Comprueba configuracion, credenciales, Word, plantilla, PostgreSQL
-    y backend sin procesar ninguna factura. Sale con codigo 0 si todo OK,
-    1 si hay errores criticos."""
+    """Comprueba configuracion, credenciales, PostgreSQL y backend sin
+    procesar ninguna factura. Sale con codigo 0 si todo OK, 1 si hay
+    errores criticos."""
     errors = []
     warnings_list = []
 
@@ -164,30 +145,7 @@ def _dry_run(config: WorkerConfig) -> None:
     else:
         errors.append("DSN PostgreSQL no configurado (Credential Manager: Gest2A3Eco/PostgreSQL)")
 
-    # 3. Word COM (solo Windows)
-    if sys.platform == "win32":
-        try:
-            import comtypes.client
-            word = comtypes.client.CreateObject("Word.Application")
-            word.Quit()
-            print("[OK] Microsoft Word COM disponible")
-        except Exception as exc:
-            errors.append(f"Microsoft Word COM no disponible: {exc}")
-    else:
-        warnings_list.append("Comprobacion de Word COM omitida (no es Windows)")
-
-    # 4. Plantilla Word
-    template_dir = Path(config.word_template_dir)
-    if not template_dir.exists():
-        errors.append(f"Directorio de plantillas no existe: {template_dir}")
-    else:
-        docx_files = list(template_dir.glob("*.docx"))
-        if docx_files:
-            print(f"[OK] Plantilla Word encontrada: {docx_files[0].name}")
-        else:
-            errors.append(f"No se encontraron plantillas .docx en {template_dir}")
-
-    # 5. Conectividad backend (/health)
+    # 3. Conectividad backend (/health)
     try:
         import requests
         base = config.api_base_url.rsplit("/api/", 1)[0]
@@ -199,17 +157,18 @@ def _dry_run(config: WorkerConfig) -> None:
     except Exception as exc:
         errors.append(f"No se pudo conectar al backend: {exc}")
 
-    # 6. Autenticacion con el backend (endpoint no mutante)
+    # 4. Autenticacion con el backend (endpoint no mutante, exclusivo de
+    # invoice_worker: /worker/invoice/.../status es de billing_worker desde
+    # la Etapa 5 y rechazaria este token).
     if config.api_token:
         try:
             import requests
             resp = requests.get(
-                f"{config.api_base_url}/worker/invoice/dry-run-check/status",
+                f"{config.api_base_url}/worker/accounting/auth-check",
                 headers={"x-api-key": config.api_token},
                 timeout=10,
             )
-            # 404 es esperado (ID no existe), 401/403 indica problema de auth
-            if resp.status_code in (200, 404):
+            if resp.status_code == 200:
                 print("[OK] Autenticacion con el backend correcta")
             elif resp.status_code in (401, 403):
                 errors.append(f"Token API rechazado por el backend (HTTP {resp.status_code})")
@@ -217,27 +176,6 @@ def _dry_run(config: WorkerConfig) -> None:
                 warnings_list.append(f"Backend respondio HTTP {resp.status_code} en endpoint de diagnostico")
         except Exception as exc:
             warnings_list.append(f"No se pudo verificar autenticacion: {exc}")
-
-    # 7. Azure (via endpoint de diagnostico del backend)
-    if config.api_token:
-        try:
-            import requests
-            base_storage = config.api_base_url.replace("/invoicing", "")
-            resp = requests.get(
-                f"{base_storage}/documents/internal/storage-health",
-                headers={"x-api-key": config.api_token},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("ok"):
-                    print(f"[OK] Almacenamiento: {data.get('backend')} ({data.get('container', data.get('path', ''))})")
-                else:
-                    errors.append(f"Almacenamiento no disponible: {data.get('error', 'desconocido')}")
-            else:
-                warnings_list.append(f"Endpoint /storage-health respondio HTTP {resp.status_code}")
-        except Exception as exc:
-            warnings_list.append(f"No se pudo verificar almacenamiento Azure: {exc}")
 
     # Resumen
     print()
@@ -294,8 +232,6 @@ def main() -> None:
     logger.info("Configuracion cargada correctamente")
     logger.info("  Backend: %s", config.api_base_url)
     logger.info("  Worker ID: %s", config.worker_id)
-    logger.info("  Plantillas: %s", config.word_template_dir)
-    logger.info("  PDFs: %s", config.pdf_output_dir)
     logger.info("  DSN configurado: %s", "Si" if config.desktop_dsn else "No")
 
     worker = InvoiceWorker(config)

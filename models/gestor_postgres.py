@@ -409,6 +409,23 @@ class GestorPostgres(GestorBase):
         if conn is not None:
             conn.close()
 
+    def advisory_lock_empresa_430(self, codigo_empresa: str) -> None:
+        """Bloqueo de transaccion para asignar subcuentas 430 sin duplicados.
+
+        Usa ``pg_advisory_xact_lock``: se libera automaticamente al hacer
+        commit/rollback de la transaccion actual, nunca hay que liberarlo a
+        mano. Debe llamarse justo antes de leer y asignar la siguiente
+        subcuenta 430 de la empresa, dentro de la misma transaccion que el
+        INSERT/UPDATE correspondiente (mismo patron que
+        sync_worker/repository.py para los buzones de correo). Especifico
+        de PostgreSQL: no existe en GestorBase porque no tiene equivalente
+        en el resto de la capa de datos historica.
+        """
+        self.conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(?))",
+            (f"subcuenta430:{codigo_empresa}",),
+        )
+
     def _inicializar_esquema_postgres(self) -> None:
         """Crea el esquema base en una base PostgreSQL vacia."""
         self.conn.executescript(SCHEMA + AUTH_SCHEMA)

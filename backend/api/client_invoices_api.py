@@ -1078,17 +1078,10 @@ def worker_claim(
     return {"claimed": True, "queue_id": item.id, "invoice_id": item.invoice_id}
 
 
-@router.get("/worker/invoice/{invoice_id}/payload")
-def worker_get_payload(
-    invoice_id: str,
-    db: Session = Depends(_db),
-    _auth: str = Depends(require_billing_worker_or_internal),
-):
-    """Descarga datos completos de factura para el worker."""
-    inv = db.get(ClientInvoice, invoice_id)
-    if not inv:
-        raise HTTPException(status_code=404)
-
+def _build_invoice_payload(db: Session, inv: ClientInvoice) -> dict:
+    """Datos completos de una factura, compartidos por billing_worker e
+    invoice_worker (cada uno los obtiene por una ruta con su propia
+    credencial; ver worker_get_payload y worker_claim_accounting)."""
     lines = db.scalars(
         select(ClientInvoiceLine).where(ClientInvoiceLine.invoice_id == inv.id)
     ).all()
@@ -1127,6 +1120,22 @@ def worker_get_payload(
             "email": org.email or "",
         }
     result["issued_snapshot"] = inv.issued_snapshot
+    return result
+
+
+@router.get("/worker/invoice/{invoice_id}/payload")
+def worker_get_payload(
+    invoice_id: str,
+    db: Session = Depends(_db),
+    _auth: str = Depends(require_billing_worker_or_internal),
+):
+    """Descarga datos completos de factura para billing_worker."""
+    inv = db.get(ClientInvoice, invoice_id)
+    if not inv:
+        raise HTTPException(status_code=404)
+
+    result = _build_invoice_payload(db, inv)
+
     from backend.api.config import get_settings
     # El renderer solo puede imprimir el QR/texto VERI*FACTU real cuando la
     # remision fiscal esta activa de verdad (ADR 0001, seccion 9/14). Con el
@@ -2062,6 +2071,18 @@ def worker_customer_error(
 # ClientInvoiceProcessingQueue.
 
 
+@router.get("/worker/accounting/auth-check")
+def worker_accounting_auth_check(
+    _auth: str = Depends(require_workstation_or_internal),
+):
+    """Diagnostico no mutante para --dry-run de invoice_worker.
+
+    invoice_worker ya no puede usar /worker/invoice/{id}/status (exclusivo
+    de billing_worker desde la Etapa 5) para verificar su credencial.
+    """
+    return {"status": "ok"}
+
+
 @router.post("/worker/accounting/claim")
 def worker_claim_accounting(
     payload: dict = Body(...),
@@ -2100,15 +2121,21 @@ def worker_claim_accounting(
     item.updated_at = now
 
     inv = db.get(ClientInvoice, item.invoice_id)
+    response = {"claimed": True, "queue_id": item.id, "invoice_id": item.invoice_id}
     if inv:
+        old_status = inv.accounting_sync_status
         inv.accounting_sync_status = "processing"
         create_invoice_event(
-            db, inv.id, "accounting_claimed", inv.accounting_sync_status,
+            db, inv.id, "accounting_claimed", old_status,
             "processing", actor_type="worker", actor_id=worker_id,
         )
+        # invoice_worker ya no llama a /worker/invoice/{id}/payload (esa
+        # ruta es exclusiva de billing_worker desde la Etapa 5): el payload
+        # completo viaja aqui mismo, en la respuesta del claim contable.
+        response["payload"] = _build_invoice_payload(db, inv)
 
     db.commit()
-    return {"claimed": True, "queue_id": item.id, "invoice_id": item.invoice_id}
+    return response
 
 
 @router.post("/worker/accounting/{invoice_id}/confirm")

@@ -24,5 +24,5 @@ if ($task) {
 Write-Host ""
 Write-Host "=== Desinstalacion completada ===" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Nota: los directorios de PDFs, logs y plantillas no se han eliminado."
+Write-Host "Nota: el directorio de logs no se ha eliminado."
 Write-Host "Las credenciales en Credential Manager no se han modificado."

@@ -37,9 +37,10 @@ if (-not (Test-Path "$WorkerDir\invoice_worker\worker.py")) {
 Write-Host "Directorio: $WorkerDir"
 
 # 3. Crear directorios necesarios
+# Desde la Etapa 8 (ADR 0001) este worker ya no genera PDF con Word: solo
+# importa clientes y facturas a contabilidad. No necesita plantillas_word
+# ni pdfs_generados.
 $dirs = @(
-    "$WorkerDir\plantillas_word",
-    "$WorkerDir\pdfs_generados",
     "$WorkerDir\logs"
 )
 foreach ($dir in $dirs) {
@@ -49,18 +50,7 @@ foreach ($dir in $dirs) {
     }
 }
 
-# 4. Verificar Word instalado
-try {
-    $word = New-Object -ComObject Word.Application -ErrorAction Stop
-    $wordVersion = $word.Version
-    $word.Quit()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null
-    Write-Host "Microsoft Word detectado: version $wordVersion" -ForegroundColor Green
-} catch {
-    Write-Host "ADVERTENCIA: Microsoft Word no detectado. El worker no podra generar PDFs." -ForegroundColor Yellow
-}
-
-# 5. Verificar credenciales en Credential Manager
+# 4. Verificar credenciales en Credential Manager
 Write-Host ""
 Write-Host "Verificando credenciales..." -ForegroundColor Cyan
 
@@ -131,26 +121,6 @@ except Exception as e:
     }
     Write-Host "  [OK] PostgreSQL Credential Manager" -ForegroundColor Green
 
-    # Word COM
-    try {
-        $word = New-Object -ComObject Word.Application -ErrorAction Stop
-        $word.Quit()
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null
-        Write-Host "  [OK] Microsoft Word COM" -ForegroundColor Green
-    } catch {
-        Write-Host "ERROR: Microsoft Word no encontrado o COM no disponible. El worker requiere Word." -ForegroundColor Red
-        exit 1
-    }
-
-    # Plantilla Word
-    $templatePath = Join-Path $WorkerDir "plantillas_word\factura_emitida.docx"
-    if (-not (Test-Path $templatePath)) {
-        Write-Host "ERROR: Plantilla Word no encontrada: $templatePath" -ForegroundColor Red
-        Write-Host "Copia la plantilla de factura antes de continuar." -ForegroundColor Yellow
-        exit 1
-    }
-    Write-Host "  [OK] Plantilla Word" -ForegroundColor Green
-
     # Dry-run
     Write-Host "`nEjecutando dry-run..." -ForegroundColor Cyan
     Push-Location $WorkerDir
@@ -191,7 +161,7 @@ except Exception as e:
         -Trigger $trigger `
         -Settings $settings `
         -Principal $principal `
-        -Description "Worker de facturacion online Gest2A3Eco (requiere sesion interactiva para Word COM y Credential Manager)" `
+        -Description "Worker de facturacion online Gest2A3Eco (requiere sesion interactiva para Credential Manager)" `
         -Force
 
     Write-Host "Tarea '$TaskName' registrada con LogonType=Interactive y trigger AtLogOn." -ForegroundColor Green

@@ -333,3 +333,66 @@ la necesite.
   deliberada y temporal: se retira en una fase posterior fuera de este
   encargo, cuando todos los consumidores (incluida la app ya publicada)
   dejen de leer el campo legacy.
+
+## 13. Etapa 8: invoice_worker refactorizado y subcuenta 430 atomica
+
+`invoice_worker/worker.py` pierde toda responsabilidad sobre PDF, email,
+FCM y Veri\*FACTU para facturas APP (ya eran responsabilidad de
+billing_worker desde las Etapas 5-7; esta etapa retira el codigo que
+todavia las ejecutaba): se eliminan `PdfRenderer`/`RealPdfRenderer` y los
+metodos `_render_pdf`/`_upload_pdf`/`_publish_document`/`_request_email`/
+`_request_fcm`. Su unico trabajo pasa a ser: reclamar altas de cliente
+(`/worker/customer/claim`, sin cambios) y reclamar facturas de la cola
+contable independiente (`/worker/accounting/claim`, Etapa 3) para importar
+tercero + subcuenta + factura a `facturas_emitidas_docs`.
+
+Como `/worker/invoice/{id}/payload` paso a ser exclusivo de billing_worker
+en la Etapa 5, `/worker/accounting/claim` ahora devuelve el payload
+completo en su respuesta (`_build_invoice_payload`, compartida con
+`worker_get_payload`) para que `invoice_worker` no necesite esa ruta.
+`invoice_worker/__main__.py --dry-run` usa el nuevo
+`GET /worker/accounting/auth-check` (no mutante) para verificar su
+credencial, en vez del endpoint de billing_worker que ya rechazaria su
+token. `WorkerConfig` pierde `word_template_dir`/`pdf_output_dir`/
+`sender_mailbox` (sin uso); `install.ps1` deja de exigir Word/plantilla.
+
+`procesos/facturas_word.py` y el flujo de facturas creadas por el
+escritorio (Tkinter) **no se tocan**: siguen usando Word COM exactamente
+igual que antes. Solo se retira Word del circuito APP, conforme al encargo
+("no elimines Word COM globalmente si sigue siendo necesario para facturas
+creadas por el escritorio").
+
+**Idempotencia de la importacion** (seccion 16 del encargo): el id interno
+de `facturas_emitidas_docs` es deterministico (`flutter_<uuid-backend>`) y
+`upsert_factura_emitida` ya usaba `ON CONFLICT(id) DO UPDATE`; reprocesar el
+mismo evento nunca duplica la fila. Se evalua anadir columnas dedicadas
+`source_system`/`accounting_sync_revision` a esa tabla para reporting
+desktop mas rico, pero se deja fuera de esta etapa: es un cambio de esquema
+sobre una tabla central del escritorio (A3ECO, `suenlace.dat`, Facturae,
+area cliente) que no se puede validar en este entorno de trabajo sin una
+base PostgreSQL real ni la suite completa del escritorio (Windows); el
+prefijo `flutter_` ya permite filtrar el origen (`WHERE id LIKE
+'flutter_%'`) mientras tanto.
+
+**Asignacion atomica de subcuenta 430** (seccion 17 del encargo):
+`_resolve_subcuenta_430` ahora:
+
+1. Adquiere `pg_advisory_xact_lock(hashtext('subcuenta430:' || codigo_empresa))`
+   (nuevo `GestorPostgres.advisory_lock_empresa_430`, especifico de
+   PostgreSQL, mismo patron que `sync_worker/repository.py` para los
+   buzones de correo) antes de leer el maximo existente, para minimizar
+   colisiones en el caso comun.
+2. La garantia final es la restriccion `UNIQUE(codigo_empresa, subcuenta)`
+   que **ya existia** en `maestro_subcuentas_empresa` (verificado en el
+   esquema, `models/gestor_base.py`): si, aun con el lock, dos procesos
+   coincidieran, el `INSERT` que pierde la carrera falla y el metodo
+   reintenta hasta 3 veces recalculando el siguiente numero libre.
+3. Nunca reutiliza la subcuenta de otro tercero (comprueba `nif_snapshot`
+   antes de asignar una nueva).
+
+Pruebas (`tests/test_invoice_worker.py`, `tests/test_gestor_postgres.py`):
+reintento ante conflicto simulado, agotamiento de reintentos, no
+reutilizacion de subcuenta ajena, idempotencia de la importacion por UUID
+backend, verificacion de que el advisory lock usa una clave por empresa, y
+un test estatico que impide que vuelvan a filtrarse metodos de PDF/email/
+FCM o imports de Word/pywin32 a `invoice_worker`.

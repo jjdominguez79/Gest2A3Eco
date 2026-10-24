@@ -48,10 +48,11 @@ llama (seccion 16 del encargo); `invoice_worker` usa en su lugar
 | POST | `/worker/customer/{id}/confirm` | confirma tercero+subcuenta 430 |
 | POST | `/worker/customer/{id}/error` | libera para reintento, registra discrepancia |
 | POST | `/worker/customer-sync`, `/worker/series-sync` | snapshot periodico (sin cambios) |
-| POST | `/worker/accounting/claim` | **Etapa 3, implementado**: reclama `ClientInvoiceAccountingQueue` (`SELECT FOR UPDATE SKIP LOCKED`) |
+| POST | `/worker/accounting/claim` | **Etapa 3, implementado**; **Etapa 8**: la respuesta incluye `payload` (invoice/lines/customer/organization) porque `invoice_worker` ya no puede llamar a `/worker/invoice/{id}/payload` (exclusivo de billing_worker) |
 | POST | `/worker/accounting/{id}/confirm` | **Etapa 3, implementado**: `create_accounting_export` completado; idempotente |
 | POST | `/worker/accounting/{id}/error` | **Etapa 3, implementado**: libera para reintento o marca `review_required`; nunca toca `invoice_status`/`fiscal_status`/`pdf_status`/`delivery_status` |
 | POST | `/worker/accounting/heartbeat` | **Etapa 5, nuevo**: latido periodico de `invoice_worker` |
+| GET | `/worker/accounting/auth-check` | **Etapa 8, nuevo**: diagnostico no mutante para `invoice_worker --dry-run` (verifica la credencial de puesto sin reclamar nada) |
 | POST | `/worker/desktop-invoices/sync` | **Etapa 10 (nuevo)**: proyecta cabeceras de facturas desktop |
 
 Las lineas de borrador aceptan `catalog_item_id` opcional: si se indica, el

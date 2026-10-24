@@ -1,24 +1,27 @@
-"""Worker principal de procesamiento de facturas online.
+"""Worker de escritorio: sincronizacion contable de la facturacion online.
 
-Flujo por factura:
-1. Reclamar factura numerada (lease)
-2. Descargar payload
-3. Importar tercero y factura idempotentemente al escritorio
-4. Generar PDF con Word COM
-5. Subir PDF y SHA-256
-6. Publicar en area documental
-7. Solicitar envio de email al backend (el backend usa Graph)
-8. Solicitar envio de FCM al backend (best-effort)
-9. Confirmar cada transicion de estado
+Desde la Etapa 8 (ADR 0001), su UNICA responsabilidad respecto a las
+facturas creadas en Flutter es:
+
+1. Consumir clientes pendientes de integrar (tercero/subcuenta 430).
+2. Consumir facturas pendientes de importar a contabilidad.
+3. Crear o vincular terceros.
+4. Crear la relacion tercero-empresa.
+5. Asignar subcuenta 430 de forma atomica (advisory lock + UNIQUE,
+   seccion 17 del encargo).
+6. Importar la factura a ``facturas_emitidas_docs``.
+7. Comunicar el resultado al backend.
+
+Ya NO genera PDF, NO envia email, NO envia FCM, NO remite nada a la AEAT
+para facturas APP: todo eso es responsabilidad exclusiva de billing_worker
+(cloud, ver billing_worker/). El worker NO usa Graph ni Firebase
+directamente; los secretos de proveedores permanecen en el backend.
 
 Cada paso es idempotente. Las caidas no duplican datos.
-El worker NO usa Graph ni Firebase directamente. Los secretos de
-proveedores permanecen en el backend.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -27,7 +30,6 @@ import sys
 import time
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Protocol
 
 import requests
@@ -38,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 # Backoff maximo entre reintentos (5 minutos)
 _MAX_BACKOFF_SECONDS = 300
+
+# Intentos ante conflicto de UNIQUE(codigo_empresa, subcuenta) al asignar
+# una subcuenta 430 nueva (seccion 17 del encargo).
+_SUBCUENTA_430_MAX_ATTEMPTS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -61,15 +67,7 @@ class DesktopGestor(Protocol):
         self, codigo_empresa: str, ejercicio: int, ids: list,
     ) -> None: ...
     def get_empresa(self, codigo: str) -> dict | None: ...
-
-
-class PdfRenderer(Protocol):
-    """Interfaz para generacion de PDF."""
-
-    def render(
-        self, empresa_conf: dict, fac: dict, cliente: dict,
-        totales: dict, template_path: str, pdf_path: str,
-    ) -> str: ...
+    def advisory_lock_empresa_430(self, codigo_empresa: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -87,24 +85,6 @@ class RealDesktopGestor:
         return getattr(self._gestor, name)
 
 
-class RealPdfRenderer:
-    """Genera PDF usando Word COM via procesos/facturas_word.py."""
-
-    def render(
-        self, empresa_conf: dict, fac: dict, cliente: dict,
-        totales: dict, template_path: str, pdf_path: str,
-    ) -> str:
-        from procesos.facturas_word import (
-            build_context_emitida,
-            generar_pdf_desde_plantilla_word,
-        )
-        context = build_context_emitida(empresa_conf, fac, cliente, totales)
-        result_pdf, _ = generar_pdf_desde_plantilla_word(
-            template_path, context, pdf_path,
-        )
-        return result_pdf
-
-
 # ---------------------------------------------------------------------------
 # Worker principal
 # ---------------------------------------------------------------------------
@@ -115,15 +95,13 @@ class InvoiceWorker:
         config: WorkerConfig,
         *,
         gestor: DesktopGestor | None = None,
-        renderer: PdfRenderer | None = None,
     ) -> None:
         self.config = config
         self._session = requests.Session()
         self._session.headers["x-api-key"] = config.api_token
 
-        # Adaptadores inyectables (produccion usa los reales)
+        # Adaptador inyectable (produccion usa el real)
         self._gestor = gestor
-        self._renderer = renderer
 
         # Control de parada
         self._running = True
@@ -138,11 +116,6 @@ class InvoiceWorker:
                 )
             self._gestor = RealDesktopGestor(self.config.desktop_dsn)
         return self._gestor
-
-    def _ensure_renderer(self) -> PdfRenderer:
-        if self._renderer is None:
-            self._renderer = RealPdfRenderer()
-        return self._renderer
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -177,14 +150,15 @@ class InvoiceWorker:
 
         while self._running:
             try:
+                self._heartbeat()
                 customer_claim = self._claim_customer()
                 if customer_claim:
                     self._process_customer(customer_claim)
                     self._consecutive_errors = 0
                     continue
-                claimed = self._claim()
+                claimed = self._claim_accounting()
                 if claimed:
-                    self._process(claimed)
+                    self._process_accounting(claimed)
                     self._consecutive_errors = 0
                 else:
                     self._sleep(self.config.poll_interval_seconds)
@@ -212,8 +186,19 @@ class InvoiceWorker:
         while self._running and time.monotonic() < end:
             time.sleep(min(1.0, end - time.monotonic()))
 
+    def _heartbeat(self) -> None:
+        """Latido best-effort para observabilidad (seccion 22 del encargo)."""
+        try:
+            self._session.post(
+                f"{self.config.api_base_url}/worker/accounting/heartbeat",
+                json={"instance_id": self.config.worker_id},
+                timeout=10,
+            )
+        except Exception:
+            logger.debug("No se pudo enviar el heartbeat (no bloqueante)", exc_info=True)
+
     # ------------------------------------------------------------------
-    # Reclamo y procesamiento
+    # Altas de cliente: tercero + subcuenta 430
     # ------------------------------------------------------------------
 
     def _claim_customer(self) -> dict | None:
@@ -299,10 +284,26 @@ class InvoiceWorker:
         relacion = gestor.get_tercero_empresa(codigo_empresa, tercero_id, 0) or {}
         subcuenta_existente = str(relacion.get("subcuenta_cliente") or "")
         if subcuenta_existente.startswith("430") and subcuenta_existente.isdigit():
+            # Reutiliza la subcuenta ya asignada a este tercero en esta
+            # empresa; nunca la reasigna ni la cambia por otra.
             subcuenta = subcuenta_existente
+            if not gestor.get_maestro_subcuenta_por_subcuenta(codigo_empresa, subcuenta):
+                gestor.upsert_maestro_subcuenta({
+                    "codigo_empresa": codigo_empresa,
+                    "tercero_id": tercero_id,
+                    "subcuenta": subcuenta,
+                    "nombre_subcuenta": customer.get("legal_name", ""),
+                    "tipo_subcuenta": "cliente",
+                    "nif_snapshot": nif_normalizado,
+                    "activo": True,
+                    "origen": "flutter",
+                    "pendiente_alta_a3": True,
+                })
         else:
             subcuenta = self._resolve_subcuenta_430(
                 gestor, codigo_empresa, nif_normalizado, digitos_plan,
+                tercero_id=tercero_id,
+                legal_name=customer.get("legal_name", ""),
             )
         gestor.upsert_tercero_empresa({
             "codigo_empresa": codigo_empresa,
@@ -310,24 +311,94 @@ class InvoiceWorker:
             "tercero_id": tercero_id,
             "subcuenta_cliente": subcuenta,
         })
-        if not gestor.get_maestro_subcuenta_por_subcuenta(codigo_empresa, subcuenta):
-            gestor.upsert_maestro_subcuenta({
-                "codigo_empresa": codigo_empresa,
-                "tercero_id": tercero_id,
-                "subcuenta": subcuenta,
-                "nombre_subcuenta": customer.get("legal_name", ""),
-                "tipo_subcuenta": "cliente",
-                "nif_snapshot": nif_normalizado,
-                "activo": True,
-                "origen": "flutter",
-                "pendiente_alta_a3": True,
-            })
         return tercero_id, subcuenta
 
-    def _claim(self) -> dict | None:
-        """Reclama la siguiente factura pendiente."""
+    def _resolve_subcuenta_430(
+        self, gestor: DesktopGestor, codigo: str, nif: str, digitos: int,
+        *, tercero_id: str, legal_name: str,
+    ) -> str:
+        """Busca subcuenta 430 existente para el NIF o asigna y reserva una nueva.
+
+        Atomico frente a concurrencia (seccion 17 del encargo):
+
+        1. Adquiere ``pg_advisory_xact_lock`` por empresa (se libera solo al
+           terminar la transaccion actual) antes de leer el maximo existente,
+           para minimizar colisiones en el caso comun.
+        2. La restriccion ``UNIQUE(codigo_empresa, subcuenta)`` de
+           ``maestro_subcuentas_empresa`` es la garantia final: si, aun asi,
+           dos procesos coincidieran en el mismo numero, el INSERT que pierde
+           la carrera falla y aqui se reintenta (hasta
+           ``_SUBCUENTA_430_MAX_ATTEMPTS`` veces) recalculando el siguiente
+           numero libre.
+
+        Nunca reutiliza una subcuenta ya asignada a otro tercero.
+        """
+        last_error: Exception | None = None
+        for attempt in range(1, _SUBCUENTA_430_MAX_ATTEMPTS + 1):
+            gestor.advisory_lock_empresa_430(codigo)
+            existing = gestor.listar_maestro_subcuentas_empresa(
+                codigo, tipo="cliente", activo=True,
+            )
+            for sub in existing:
+                snap = (sub.get("nif_snapshot") or "").upper()
+                if snap == nif and sub.get("subcuenta", "").startswith("430"):
+                    return sub["subcuenta"]
+
+            prefix = "430"
+            suffix_len = digitos - len(prefix)
+            max_num = 0
+            for sub in existing:
+                sc = sub.get("subcuenta", "")
+                if sc.startswith(prefix) and len(sc) == digitos:
+                    try:
+                        num = int(sc[len(prefix):])
+                        if num > max_num:
+                            max_num = num
+                    except ValueError:
+                        continue
+            next_num = max_num + 1
+            subcuenta = f"{prefix}{next_num:0{suffix_len}d}"
+
+            try:
+                gestor.upsert_maestro_subcuenta({
+                    "codigo_empresa": codigo,
+                    "tercero_id": tercero_id,
+                    "subcuenta": subcuenta,
+                    "nombre_subcuenta": legal_name,
+                    "tipo_subcuenta": "cliente",
+                    "nif_snapshot": nif,
+                    "activo": True,
+                    "origen": "flutter",
+                    "pendiente_alta_a3": True,
+                })
+                return subcuenta
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Conflicto asignando subcuenta %s en %s (intento %d/%d); "
+                    "reintentando: %s",
+                    subcuenta, codigo, attempt, _SUBCUENTA_430_MAX_ATTEMPTS, exc,
+                )
+
+        raise RuntimeError(
+            f"No se pudo asignar una subcuenta 430 para {codigo} tras "
+            f"{_SUBCUENTA_430_MAX_ATTEMPTS} intentos"
+        ) from last_error
+
+    # ------------------------------------------------------------------
+    # Importacion contable de facturas (cola independiente)
+    # ------------------------------------------------------------------
+
+    def _claim_accounting(self) -> dict | None:
+        """Reclama la siguiente factura pendiente de importar a contabilidad.
+
+        Usa ClientInvoiceAccountingQueue (Etapa 3), nunca
+        ClientInvoiceProcessingQueue (exclusiva de billing_worker desde la
+        Etapa 5). Un fallo aqui nunca afecta a la validez fiscal de la
+        factura (ADR 0001, seccion 5/16).
+        """
         resp = self._session.post(
-            f"{self.config.api_base_url}/worker/claim",
+            f"{self.config.api_base_url}/worker/accounting/claim",
             json={
                 "worker_id": self.config.worker_id,
                 "lease_minutes": self.config.lease_minutes,
@@ -336,76 +407,21 @@ class InvoiceWorker:
         resp.raise_for_status()
         data = resp.json()
         if data.get("claimed"):
-            logger.info("Reclamada factura %s", data["invoice_id"])
+            logger.info("Reclamada factura %s para contabilidad", data["invoice_id"])
             return data
         return None
 
-    def _process(self, claim: dict) -> None:
-        """Procesa una factura reclamada."""
+    def _process_accounting(self, claim: dict) -> None:
+        """Procesa la importacion contable de una factura reclamada."""
         invoice_id = claim["invoice_id"]
         try:
-            # Consultar estado actual (recuperacion tras caida)
-            status = self._get_status(invoice_id)
-
-            # 1. Descargar payload
-            payload = self._get_payload(invoice_id)
-
-            # 2. Importar al escritorio (idempotente)
-            if status.get("invoice_status") not in (
-                "imported", "rendered", "emailed",
-            ):
-                self._import_to_desktop(invoice_id, payload)
-                self._confirm_import(invoice_id)
-            else:
-                logger.info("Importacion ya completada para %s", invoice_id)
-
-            # 3. Generar PDF con Word
-            if not status.get("pdf_uploaded"):
-                pdf_path = self._render_pdf(invoice_id, payload)
-                # 4. Subir PDF al backend (Azure)
-                self._upload_pdf(invoice_id, pdf_path)
-            else:
-                logger.info("PDF ya subido para %s", invoice_id)
-
-            # 5. Publicar en area documental (idempotente)
-            if not status.get("document_published"):
-                self._publish_document(invoice_id, payload)
-            else:
-                logger.info("Documento ya publicado para %s", invoice_id)
-
-            # 6. Solicitar envio de email al backend
-            if status.get("invoice_status") != "emailed":
-                self._request_email(invoice_id, payload)
-            else:
-                logger.info("Email ya enviado para %s", invoice_id)
-
-            # 7. Solicitar FCM al backend (best-effort)
-            self._request_fcm(invoice_id)
-
-            logger.info("Factura %s procesada con exito", invoice_id)
-
-        except Exception as e:
-            logger.exception("Error procesando factura %s", invoice_id)
-            self._report_error(invoice_id, str(e))
-
-    def _get_status(self, invoice_id: str) -> dict:
-        """Consulta el estado actual de procesamiento."""
-        try:
-            resp = self._session.get(
-                f"{self.config.api_base_url}/worker/invoice/{invoice_id}/status",
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception:
-            logger.warning("No se pudo consultar estado de %s", invoice_id)
-            return {}
-
-    def _get_payload(self, invoice_id: str) -> dict:
-        resp = self._session.get(
-            f"{self.config.api_base_url}/worker/invoice/{invoice_id}/payload",
-        )
-        resp.raise_for_status()
-        return self._apply_issued_snapshot(resp.json())
+            payload = self._apply_issued_snapshot(claim.get("payload") or {})
+            desktop_invoice_id = self._import_to_desktop(invoice_id, payload)
+            self._confirm_accounting(invoice_id, payload, desktop_invoice_id)
+            logger.info("Factura %s importada a contabilidad", invoice_id)
+        except Exception as exc:
+            logger.exception("Error importando a contabilidad la factura %s", invoice_id)
+            self._report_accounting_error(invoice_id, str(exc))
 
     @staticmethod
     def _apply_issued_snapshot(payload: dict) -> dict:
@@ -434,12 +450,8 @@ class InvoiceWorker:
             result["lines"] = snapshot["lines"]
         return result
 
-    # ------------------------------------------------------------------
-    # Paso 2: Importacion idempotente al escritorio
-    # ------------------------------------------------------------------
-
-    def _import_to_desktop(self, invoice_id: str, payload: dict) -> None:
-        """Importa tercero y factura al escritorio PostgreSQL.
+    def _import_to_desktop(self, invoice_id: str, payload: dict) -> str:
+        """Importa tercero y factura al escritorio PostgreSQL. Devuelve el id interno.
 
         Idempotente:
         - Exige que el tercero ya haya sido validado por el flujo de altas
@@ -535,6 +547,14 @@ class InvoiceWorker:
             "enviado": False,
             "origen_factura": "facturacion",
         }
+        # Idempotencia por UUID del backend (seccion 16 del encargo): el id
+        # interno es deterministico (``flutter_<uuid>``) y
+        # upsert_factura_emitida usa ON CONFLICT(id) DO UPDATE, asi que
+        # reprocesar el mismo evento nunca duplica la fila. El prefijo
+        # tambien sirve como marca de origen consultable
+        # (``WHERE id LIKE 'flutter_%'``); anadir columnas dedicadas
+        # source_system/accounting_sync_revision a facturas_emitidas_docs
+        # queda fuera de esta etapa (ver docs/adr/0001, seccion 16).
 
         # Retencion
         wh_rate = Decimal(str(invoice.get("withholding_rate", "0")))
@@ -567,240 +587,27 @@ class InvoiceWorker:
             "Factura importada %s-%06d (empresa %s)",
             series, numero, codigo_empresa,
         )
+        return str(factura_desktop_id)
 
-    def _resolve_subcuenta_430(
-        self, gestor: DesktopGestor, codigo: str, nif: str, digitos: int,
-    ) -> str:
-        """Busca subcuenta 430 existente para el NIF o asigna la siguiente."""
-        existing = gestor.listar_maestro_subcuentas_empresa(
-            codigo, tipo="cliente", activo=True,
-        )
-        for sub in existing:
-            snap = (sub.get("nif_snapshot") or "").upper()
-            if snap == nif and sub.get("subcuenta", "").startswith("430"):
-                return sub["subcuenta"]
-
-        # Asignar siguiente subcuenta 430
-        prefix = "430"
-        suffix_len = digitos - len(prefix)
-        max_num = 0
-        for sub in existing:
-            sc = sub.get("subcuenta", "")
-            if sc.startswith(prefix) and len(sc) == digitos:
-                try:
-                    num = int(sc[len(prefix):])
-                    if num > max_num:
-                        max_num = num
-                except ValueError:
-                    continue
-        next_num = max_num + 1
-        return f"{prefix}{next_num:0{suffix_len}d}"
-
-    def _confirm_import(self, invoice_id: str) -> None:
-        resp = self._session.post(
-            f"{self.config.api_base_url}/worker/invoice/{invoice_id}/import-confirmed",
-        )
-        resp.raise_for_status()
-
-    # ------------------------------------------------------------------
-    # Paso 3: Generacion real de PDF con Word COM
-    # ------------------------------------------------------------------
-
-    def _render_pdf(self, invoice_id: str, payload: dict) -> Path:
-        """Genera PDF usando Word COM via procesos/facturas_word.py."""
-        pdf_dir = Path(self.config.pdf_output_dir)
-        pdf_dir.mkdir(parents=True, exist_ok=True)
-
-        series = payload.get("invoice", {}).get("series_code", "WEB")
-        number = payload.get("invoice", {}).get("invoice_number", 0)
-        pdf_path = pdf_dir / f"{series}-{number:06d}.pdf"
-
-        # Idempotente: si el PDF ya existe y no esta vacio, reutilizar
-        if pdf_path.exists() and pdf_path.stat().st_size > 100:
-            logger.info("PDF ya existe: %s", pdf_path)
-            return pdf_path
-
-        # Construir contextos para build_context_emitida
-        org = payload.get("organization", {})
+    def _confirm_accounting(
+        self, invoice_id: str, payload: dict, desktop_invoice_id: str,
+    ) -> None:
         customer = payload.get("customer", {})
-        invoice = payload.get("invoice", {})
-        lines = payload.get("lines", [])
-
-        empresa_conf = {
-            "nombre": org.get("name", ""),
-            "codigo": org.get("company_code", ""),
-            "cif": org.get("tax_id", ""),
-            "direccion": org.get("address", ""),
-            "cp": org.get("postal_code", ""),
-            "poblacion": org.get("city", ""),
-            "provincia": org.get("province", ""),
-            "telefono": org.get("phone", ""),
-            "email": org.get("email", ""),
-            "logo_path": "",
-        }
-
-        fac = {
-            "serie": series,
-            "numero": number,
-            "fecha_expedicion": invoice.get("invoice_date", ""),
-            "descripcion": f"Factura {series}-{number:06d}",
-            "observaciones": invoice.get("notes", ""),
-            "moneda_simbolo": "EUR",
-            "retencion_aplica": float(invoice.get("withholding_rate", "0")) > 0,
-            "retencion_pct": float(invoice.get("withholding_rate", "0")),
-            "retencion_base": float(invoice.get("subtotal", "0")),
-            "retencion_importe": -abs(float(invoice.get("withholding_amount", "0"))),
-            "lineas": [],
-        }
-        for ln in lines:
-            qty = float(ln.get("quantity", "1"))
-            price = float(ln.get("unit_price", "0"))
-            discount_pct = float(ln.get("discount_percent", "0"))
-            base = qty * price * (1 - discount_pct / 100)
-            vat_rate = float(ln.get("vat_rate", "21"))
-            cuota = base * vat_rate / 100
-            fac["lineas"].append({
-                "concepto": ln.get("description", ""),
-                "unidades": qty,
-                "precio": price,
-                "base": base,
-                "pct_iva": vat_rate,
-                "cuota_iva": cuota,
-            })
-
-        cliente = {
-            "nombre": customer.get("legal_name", ""),
-            "nombre_legal": customer.get("legal_name", ""),
-            "nif": customer.get("tax_id", ""),
-            "direccion": customer.get("address", ""),
-            "cp": customer.get("postal_code", ""),
-            "poblacion": customer.get("city", ""),
-            "provincia": customer.get("province", ""),
-            "pais": customer.get("country", "ES"),
-            "email": customer.get("email", ""),
-            "telefono": customer.get("phone", ""),
-        }
-
-        totales = {
-            "base": float(invoice.get("subtotal", "0")),
-            "iva": float(invoice.get("total_vat", "0")),
-            "suplidos": 0,
-            "irpf": -abs(float(invoice.get("withholding_amount", "0"))),
-            "total": float(invoice.get("total", "0")),
-        }
-
-        # Resolver plantilla Word
-        template_dir = Path(self.config.word_template_dir)
-        template_path = template_dir / "factura_emitida.docx"
-        if not template_path.exists():
-            docx_files = list(template_dir.glob("*.docx"))
-            if docx_files:
-                template_path = docx_files[0]
-            else:
-                raise FileNotFoundError(
-                    f"No se encontro plantilla Word en {template_dir}"
-                )
-
-        renderer = self._ensure_renderer()
-        result = renderer.render(
-            empresa_conf, fac, cliente, totales,
-            str(template_path), str(pdf_path),
-        )
-        logger.info("PDF generado: %s", result)
-        return Path(result)
-
-    # ------------------------------------------------------------------
-    # Paso 4: Subida del PDF al backend
-    # ------------------------------------------------------------------
-
-    def _upload_pdf(self, invoice_id: str, pdf_path: Path) -> None:
-        content = pdf_path.read_bytes()
-        sha256 = hashlib.sha256(content).hexdigest()
-
         resp = self._session.post(
-            f"{self.config.api_base_url}/worker/invoice/{invoice_id}/pdf",
-            files={"file": (pdf_path.name, content, "application/pdf")},
-            data={"sha256": sha256},
-        )
-        resp.raise_for_status()
-        logger.info("PDF subido: %s (%d bytes)", pdf_path.name, len(content))
-
-    # ------------------------------------------------------------------
-    # Paso 5: Publicacion en area documental
-    # ------------------------------------------------------------------
-
-    def _publish_document(self, invoice_id: str, payload: dict) -> None:
-        """Publica el PDF en el area documental del cliente."""
-        invoice = payload.get("invoice", {})
-        series = invoice.get("series_code", "WEB")
-        number = invoice.get("invoice_number", 0)
-
-        resp = self._session.post(
-            f"{self.config.api_base_url}/worker/invoice/{invoice_id}/publish-document",
+            f"{self.config.api_base_url}/worker/accounting/{invoice_id}/confirm",
             json={
-                "description": f"Factura {series}-{number:06d}",
+                "desktop_tercero_id": str(customer.get("desktop_tercero_id") or ""),
+                "desktop_subcuenta": str(customer.get("desktop_subcuenta") or ""),
+                "desktop_invoice_ref": desktop_invoice_id,
             },
         )
         resp.raise_for_status()
-        doc_id = resp.json().get("document_id")
-        logger.info("Documento publicado: %s", doc_id)
 
-    # ------------------------------------------------------------------
-    # Paso 6: Email (delegado al backend)
-    # ------------------------------------------------------------------
-
-    def _request_email(self, invoice_id: str, payload: dict) -> None:
-        """Solicita al backend el envio del email con el PDF adjunto."""
-        invoice = payload.get("invoice", {})
-        recipient = invoice.get("recipient_email", "")
-
-        resp = self._session.post(
-            f"{self.config.api_base_url}/worker/invoice/{invoice_id}/send-email",
-            json={
-                "recipient_email": recipient,
-                "sender_mailbox": self.config.sender_mailbox,
-            },
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        if result.get("already_sent"):
-            logger.info("Email ya enviado para %s", invoice_id)
-        elif result.get("skipped"):
-            logger.info("Email omitido para %s: %s", invoice_id, result.get("reason"))
-        else:
-            logger.info(
-                "Email enviado para %s (msg_id: %s)",
-                invoice_id, result.get("message_id", ""),
-            )
-
-    # ------------------------------------------------------------------
-    # Paso 7: FCM (delegado al backend, best-effort)
-    # ------------------------------------------------------------------
-
-    def _request_fcm(self, invoice_id: str) -> None:
-        """Solicita al backend el envio de notificacion push."""
-        try:
-            resp = self._session.post(
-                f"{self.config.api_base_url}/worker/invoice/{invoice_id}/send-fcm",
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            logger.info(
-                "FCM para %s: enviados=%s errores=%s",
-                invoice_id, result.get("sent", 0), result.get("errors", 0),
-            )
-        except Exception:
-            logger.exception("Error solicitando FCM para %s (no bloqueante)", invoice_id)
-
-    # ------------------------------------------------------------------
-    # Error reporting
-    # ------------------------------------------------------------------
-
-    def _report_error(self, invoice_id: str, error: str) -> None:
+    def _report_accounting_error(self, invoice_id: str, error: str) -> None:
         try:
             self._session.post(
-                f"{self.config.api_base_url}/worker/invoice/{invoice_id}/error",
-                json={"error": error[:500]},
+                f"{self.config.api_base_url}/worker/accounting/{invoice_id}/error",
+                json={"error": error[:2000]},
             )
         except Exception:
-            logger.exception("No se pudo reportar error para %s", invoice_id)
+            logger.exception("No se pudo reportar el error contable de %s", invoice_id)

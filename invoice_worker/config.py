@@ -3,6 +3,11 @@
 Los secretos (token API, DSN PostgreSQL) se obtienen de Windows
 Credential Manager via utils/credential_store.py. Solo los valores
 no secretos se permiten en variables de entorno o fichero TOML.
+
+Desde la Etapa 8 (ADR 0001), este worker solo importa clientes y facturas
+a contabilidad: ya no genera PDF, no envia email ni FCM, no remite nada a
+la AEAT (eso es responsabilidad exclusiva de billing_worker, cloud). Por
+eso ya no necesita plantilla Word, carpeta de PDFs ni buzon remitente.
 """
 
 from __future__ import annotations
@@ -21,14 +26,10 @@ class WorkerConfig:
     poll_interval_seconds: int
     max_retries: int
     # -- Directorios --
-    word_template_dir: str
-    pdf_output_dir: str
     log_dir: str
     # -- Secretos (inyectados, no persistidos) --
     api_token: str
     desktop_dsn: str
-    # -- Email logico (el envio real lo hace el backend) --
-    sender_mailbox: str
 
     @staticmethod
     def from_env() -> WorkerConfig:
@@ -43,20 +44,11 @@ class WorkerConfig:
                 os.getenv("INVOICE_WORKER_POLL_SECONDS", "30"),
             ),
             max_retries=int(os.getenv("INVOICE_WORKER_MAX_RETRIES", "5")),
-            word_template_dir=os.getenv(
-                "INVOICE_WORKER_TEMPLATE_DIR", "./plantillas_word",
-            ),
-            pdf_output_dir=os.getenv(
-                "INVOICE_WORKER_PDF_DIR", "./pdfs_generados",
-            ),
             log_dir=os.getenv(
                 "INVOICE_WORKER_LOG_DIR", "./logs",
             ),
             api_token=os.getenv("INVOICE_WORKER_API_TOKEN", ""),
             desktop_dsn=os.getenv("INVOICE_WORKER_DESKTOP_DSN", ""),
-            sender_mailbox=os.getenv(
-                "INVOICE_WORKER_GRAPH_SENDER", "Oficina@gestinem.es",
-            ),
         )
 
     @staticmethod
@@ -109,10 +101,7 @@ class WorkerConfig:
             lease_minutes=base.lease_minutes,
             poll_interval_seconds=base.poll_interval_seconds,
             max_retries=base.max_retries,
-            word_template_dir=base.word_template_dir,
-            pdf_output_dir=base.pdf_output_dir,
             log_dir=base.log_dir,
             api_token=api_token,
             desktop_dsn=desktop_dsn,
-            sender_mailbox=base.sender_mailbox,
         )

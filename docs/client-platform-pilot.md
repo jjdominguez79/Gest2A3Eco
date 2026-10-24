@@ -103,12 +103,18 @@ cmdkey /generic:"Gest2A3Eco/WorkstationToken" /user:"worker" /pass:"token-del-ba
 En la configuracion local de Gest2A3Eco, `integrations_api_url` debe apuntar al
 backend desplegado. No guardar el token ni contrasenas en el JSON local.
 
-### Maquina virtual Synology (fase 2, no instalar ahora)
+### Maquina virtual Synology (superada por ADR 0001, no instalar)
 
-La maquina que figuraba en la planificacion era una **VM Windows 10/11 con
-Microsoft Word**, destinada a ejecutar `invoice_worker` mediante Word COM para
-las facturas creadas desde Flutter. No interviene en la consulta de facturas
-emitidas por el escritorio y debe permanecer aplazada junto con
+La planificacion original de esta fase 2 preveia una **VM Windows 10/11 con
+Microsoft Word**, destinada a ejecutar `invoice_worker` mediante Word COM
+para generar el PDF de las facturas creadas desde Flutter. Esa idea quedo
+superada por `docs/adr/0001-facturacion-autonoma-cliente.md`: el PDF, el
+envio por email y las notificaciones push de facturas APP los genera
+`billing_worker` en la nube (Linux, Chromium headless, sin Word), no el
+escritorio. `invoice_worker` sigue necesitando un puesto Windows con
+PostgreSQL del despacho, pero unicamente para importar clientes y facturas a
+contabilidad (tercero, subcuenta 430, `facturas_emitidas_docs`); no necesita
+Word ni ninguna VM dedicada. Sigue aplazado junto con
 `CLIENT_INVOICING_ENABLED=false`.
 
 ---

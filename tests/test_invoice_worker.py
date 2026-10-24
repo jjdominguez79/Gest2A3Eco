@@ -1,8 +1,10 @@
 """Tests del invoice worker con adaptadores simulados.
 
-Verifica el flujo completo: claim -> import -> PDF -> upload -> publish -> email -> FCM.
-Cada paso es idempotente; las caidas no duplican datos.
-El worker delega el envio de email y FCM al backend.
+Desde la Etapa 8 (ADR 0001) este worker solo importa clientes y facturas a
+contabilidad: claim -> import (tercero/subcuenta/factura) -> confirm. Ya no
+genera PDF, no envia email ni FCM (eso es responsabilidad exclusiva de
+billing_worker, cloud). Cada paso es idempotente; las caidas no duplican
+datos.
 """
 
 from __future__ import annotations
@@ -25,11 +27,16 @@ from invoice_worker.worker import InvoiceWorker
 
 
 # ---------------------------------------------------------------------------
-# Mock adapters
+# Mock adapter
 # ---------------------------------------------------------------------------
 
 class MockGestor:
-    """Simula el gestor del escritorio en memoria."""
+    """Simula el gestor del escritorio en memoria.
+
+    Reproduce la restriccion UNIQUE(codigo_empresa, subcuenta) real de
+    maestro_subcuentas_empresa para poder probar el reintento ante
+    conflicto (seccion 17 del encargo).
+    """
 
     def __init__(self):
         self.terceros: dict[str, dict] = {}
@@ -44,6 +51,11 @@ class MockGestor:
             }
         }
         self._next_id = 1
+        self.advisory_lock_calls: list[str] = []
+        # Si > 0, las N primeras llamadas a upsert_maestro_subcuenta para
+        # una subcuenta nueva fallan como si otro proceso hubiera ganado la
+        # carrera (simula UniqueViolation real de Postgres).
+        self.force_conflicts_remaining = 0
 
     def get_empresa(self, codigo: str) -> dict | None:
         return self.empresas.get(codigo)
@@ -82,6 +94,22 @@ class MockGestor:
         self.terceros_empresa.append(rel)
 
     def upsert_maestro_subcuenta(self, datos: dict) -> int:
+        codigo = datos.get("codigo_empresa")
+        subcuenta = datos.get("subcuenta")
+        if any(
+            s["codigo_empresa"] == codigo and s["subcuenta"] == subcuenta
+            for s in self.subcuentas
+        ):
+            raise RuntimeError(
+                f"duplicate key value violates unique constraint "
+                f"(codigo_empresa, subcuenta)=({codigo}, {subcuenta})"
+            )
+        if self.force_conflicts_remaining > 0:
+            self.force_conflicts_remaining -= 1
+            raise RuntimeError(
+                "duplicate key value violates unique constraint "
+                "(simulado: otro proceso gano la carrera)"
+            )
         self.subcuentas.append(datos)
         return len(self.subcuentas)
 
@@ -109,22 +137,8 @@ class MockGestor:
             if factura_id in self.facturas:
                 self.facturas[factura_id]["estado_contable"] = "pendiente"
 
-
-class MockRenderer:
-    """Simula generacion de PDF escribiendo un archivo dummy."""
-
-    def __init__(self):
-        self.calls: list[dict] = []
-
-    def render(self, empresa_conf, fac, cliente, totales, template_path, pdf_path):
-        self.calls.append({
-            "empresa": empresa_conf,
-            "fac": fac,
-            "cliente": cliente,
-            "totales": totales,
-        })
-        Path(pdf_path).write_bytes(b"%PDF-1.4 " + b"X" * 200)
-        return pdf_path
+    def advisory_lock_empresa_430(self, codigo_empresa: str) -> None:
+        self.advisory_lock_calls.append(codigo_empresa)
 
 
 # ---------------------------------------------------------------------------
@@ -181,21 +195,10 @@ SAMPLE_PAYLOAD = {
             "line_total": "500.00",
         },
     ],
-    "push_tokens": [
-        {"token": "fcm-token-1", "platform": "android"},
-        {"token": "fcm-token-2", "platform": "web"},
-    ],
 }
 
 
 def _make_config(tmp_path: Path) -> WorkerConfig:
-    template_dir = tmp_path / "templates"
-    template_dir.mkdir()
-    (template_dir / "factura_emitida.docx").write_bytes(b"PK fake docx")
-
-    pdf_dir = tmp_path / "pdfs"
-    pdf_dir.mkdir()
-
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
 
@@ -205,12 +208,9 @@ def _make_config(tmp_path: Path) -> WorkerConfig:
         lease_minutes=10,
         poll_interval_seconds=5,
         max_retries=5,
-        word_template_dir=str(template_dir),
-        pdf_output_dir=str(pdf_dir),
         log_dir=str(log_dir),
         api_token="test-token",
         desktop_dsn="",
-        sender_mailbox="test@gestinem.es",
     )
 
 
@@ -261,7 +261,9 @@ class TestImportToDesktop:
         worker = InvoiceWorker(config, gestor=gestor)
 
         payload = _payload_with_synced_customer(worker, gestor)
-        worker._import_to_desktop("inv-001", payload)
+        desktop_id = worker._import_to_desktop("inv-001", payload)
+
+        assert desktop_id == "flutter_inv-001"
 
         # Tercero creado
         assert len(gestor.terceros) == 1
@@ -278,16 +280,16 @@ class TestImportToDesktop:
         # Relacion tercero-empresa
         assert len(gestor.terceros_empresa) == 1
 
-        # Factura importada
-        assert len(gestor.facturas) == 1
-        fac = list(gestor.facturas.values())[0]
+        # Factura importada con el id deterministico (idempotencia por UUID backend)
+        assert "flutter_inv-001" in gestor.facturas
+        fac = gestor.facturas["flutter_inv-001"]
         assert fac["serie"] == "WEB"
         assert fac["numero"] == 1
         assert fac["codigo_empresa"] == "TEST01"
         assert fac["estado_contable"] == "pendiente"
 
-    def test_idempotent_import(self, tmp_path):
-        """Segunda importacion no duplica tercero ni subcuenta."""
+    def test_idempotent_import_same_backend_uuid_never_duplicates(self, tmp_path):
+        """Reprocesar el mismo invoice_id nunca duplica tercero, subcuenta ni factura."""
         config = _make_config(tmp_path)
         gestor = MockGestor()
         worker = InvoiceWorker(config, gestor=gestor)
@@ -300,6 +302,8 @@ class TestImportToDesktop:
         assert len(gestor.terceros) == 1
         # Solo 1 subcuenta (segunda vez la encuentra existente)
         assert len(gestor.subcuentas) == 1
+        # Solo 1 factura: mismo id deterministico "flutter_inv-001"
+        assert len(gestor.facturas) == 1
 
     def test_missing_company_raises(self, tmp_path):
         config = _make_config(tmp_path)
@@ -337,53 +341,12 @@ class TestImportToDesktop:
         }
         worker._import_to_desktop("inv-wh", payload_wh)
 
-        fac = list(gestor.facturas.values())[0]
+        fac = gestor.facturas["flutter_inv-wh"]
         assert fac["retencion_aplica"] is True
         assert fac["retencion_pct"] == 15.0
         assert fac["retencion_importe"] == -75.0
 
-
-class TestResolveSubcuenta430:
-    def test_assigns_first_subcuenta(self, tmp_path):
-        config = _make_config(tmp_path)
-        gestor = MockGestor()
-        worker = InvoiceWorker(config, gestor=gestor)
-
-        sub = worker._resolve_subcuenta_430(gestor, "TEST01", "B12345678", 8)
-        assert sub == "43000001"
-
-    def test_assigns_next_sequential(self, tmp_path):
-        config = _make_config(tmp_path)
-        gestor = MockGestor()
-        # Preexisting subcuenta
-        gestor.subcuentas.append({
-            "codigo_empresa": "TEST01",
-            "subcuenta": "43000005",
-            "tipo_subcuenta": "cliente",
-            "nif_snapshot": "A11111111",
-        })
-        worker = InvoiceWorker(config, gestor=gestor)
-
-        sub = worker._resolve_subcuenta_430(gestor, "TEST01", "B12345678", 8)
-        assert sub == "43000006"
-
-    def test_finds_existing_by_nif(self, tmp_path):
-        config = _make_config(tmp_path)
-        gestor = MockGestor()
-        gestor.subcuentas.append({
-            "codigo_empresa": "TEST01",
-            "subcuenta": "43000003",
-            "tipo_subcuenta": "cliente",
-            "nif_snapshot": "B12345678",
-        })
-        worker = InvoiceWorker(config, gestor=gestor)
-
-        sub = worker._resolve_subcuenta_430(gestor, "TEST01", "B12345678", 8)
-        assert sub == "43000003"  # reutiliza la existente
-
-
-class TestRenderPdf:
-    def test_snapshot_de_emision_prevalece_y_conserva_enlace_desktop(self):
+    def test_apply_issued_snapshot_prevails_over_live_data(self):
         payload = deepcopy(SAMPLE_PAYLOAD)
         payload["customer"]["desktop_tercero_id"] = "ter-1"
         payload["customer"]["desktop_subcuenta"] = "43000001"
@@ -402,241 +365,205 @@ class TestRenderPdf:
         assert result["invoice"]["series_code"] == "APP"
         assert result["lines"][0]["description"] == "LINEA AL EMITIR"
 
-    def test_calls_renderer_and_creates_file(self, tmp_path):
-        config = _make_config(tmp_path)
-        renderer = MockRenderer()
-        worker = InvoiceWorker(config, renderer=renderer)
 
-        pdf_path = worker._render_pdf("inv-001", SAMPLE_PAYLOAD)
-
-        assert pdf_path.exists()
-        assert pdf_path.stat().st_size > 0
-        assert len(renderer.calls) == 1
-        assert renderer.calls[0]["empresa"]["nombre"] == "Empresa Test SL"
-
-    def test_idempotent_skips_existing_pdf(self, tmp_path):
-        config = _make_config(tmp_path)
-        renderer = MockRenderer()
-        worker = InvoiceWorker(config, renderer=renderer)
-
-        pdf1 = worker._render_pdf("inv-001", SAMPLE_PAYLOAD)
-        pdf2 = worker._render_pdf("inv-001", SAMPLE_PAYLOAD)
-
-        assert pdf1 == pdf2
-        assert len(renderer.calls) == 1  # solo renderizo una vez
-
-
-class TestRequestEmail:
-    """El worker delega el envio de email al backend."""
-
-    @responses.activate
-    def test_requests_email_via_backend(self, tmp_path):
-        config = _make_config(tmp_path)
-        worker = InvoiceWorker(config)
-        base = config.api_base_url
-
-        responses.add(
-            responses.POST,
-            f"{base}/worker/invoice/inv-001/send-email",
-            json={"status": "ok", "message_id": "msg-123"},
-        )
-
-        worker._request_email("inv-001", SAMPLE_PAYLOAD)
-
-        assert len(responses.calls) == 1
-        body = json.loads(responses.calls[0].request.body)
-        assert body["recipient_email"] == "cliente@test.com"
-        assert body["sender_mailbox"] == "test@gestinem.es"
-
-    @responses.activate
-    def test_already_sent_is_handled(self, tmp_path):
-        config = _make_config(tmp_path)
-        worker = InvoiceWorker(config)
-        base = config.api_base_url
-
-        responses.add(
-            responses.POST,
-            f"{base}/worker/invoice/inv-001/send-email",
-            json={"status": "ok", "already_sent": True},
-        )
-
-        worker._request_email("inv-001", SAMPLE_PAYLOAD)
-        assert len(responses.calls) == 1
-
-
-class TestRequestFcm:
-    """El worker delega FCM al backend (best-effort)."""
-
-    @responses.activate
-    def test_requests_fcm_via_backend(self, tmp_path):
-        config = _make_config(tmp_path)
-        worker = InvoiceWorker(config)
-        base = config.api_base_url
-
-        responses.add(
-            responses.POST,
-            f"{base}/worker/invoice/inv-001/send-fcm",
-            json={"status": "ok", "sent": 2, "errors": 0},
-        )
-
-        worker._request_fcm("inv-001")
-        assert len(responses.calls) == 1
-
-    @responses.activate
-    def test_fcm_error_does_not_propagate(self, tmp_path):
-        """FCM es best-effort; los errores no bloquean el flujo."""
-        config = _make_config(tmp_path)
-        worker = InvoiceWorker(config)
-        base = config.api_base_url
-
-        responses.add(
-            responses.POST,
-            f"{base}/worker/invoice/inv-001/send-fcm",
-            status=500,
-        )
-
-        # No debe lanzar excepcion
-        worker._request_fcm("inv-001")
-
-
-class TestFullProcess:
-    """Test del flujo completo _process con todos los pasos mockeados."""
-
-    @responses.activate
-    def test_full_flow(self, tmp_path):
-        config = _make_config(tmp_path)
-        gestor = MockGestor()
-        renderer = MockRenderer()
-
-        worker = InvoiceWorker(
-            config,
-            gestor=gestor,
-            renderer=renderer,
-        )
-
-        base = config.api_base_url
-        payload = _payload_with_synced_customer(worker, gestor)
-
-        # Mock all API calls
-        responses.add(responses.GET, f"{base}/worker/invoice/inv-full/status",
-                      json={"invoice_status": "claimed", "pdf_uploaded": False,
-                            "document_published": False})
-        responses.add(responses.GET, f"{base}/worker/invoice/inv-full/payload",
-                      json=payload)
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/import-confirmed",
-                      json={"status": "ok"})
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/pdf",
-                      json={"status": "ok"})
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/publish-document",
-                      json={"document_id": "doc-123"})
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/send-email",
-                      json={"status": "ok", "message_id": "msg-1"})
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-full/send-fcm",
-                      json={"status": "ok", "sent": 2, "errors": 0})
-
-        worker._process({"invoice_id": "inv-full"})
-
-        # Verify each step executed
-        assert len(gestor.facturas) == 1  # import
-        assert len(renderer.calls) == 1   # PDF
-
-        # Verify API calls made
-        api_paths = [c.request.path_url for c in responses.calls]
-        assert any("/status" in p for p in api_paths)
-        assert any("/payload" in p for p in api_paths)
-        assert any("/import-confirmed" in p for p in api_paths)
-        assert any("/pdf" in p for p in api_paths)
-        assert any("/publish-document" in p for p in api_paths)
-        assert any("/send-email" in p for p in api_paths)
-        assert any("/send-fcm" in p for p in api_paths)
-
-    @responses.activate
-    def test_recovery_skips_completed_steps(self, tmp_path):
-        """Si el worker se recupera, no repite pasos completados."""
-        config = _make_config(tmp_path)
-        gestor = MockGestor()
-        renderer = MockRenderer()
-
-        worker = InvoiceWorker(config, gestor=gestor, renderer=renderer)
-        base = config.api_base_url
-
-        # Status indica que PDF ya esta subido y documento publicado
-        responses.add(responses.GET, f"{base}/worker/invoice/inv-rec/status",
-                      json={"invoice_status": "rendered", "pdf_uploaded": True,
-                            "document_published": True})
-        responses.add(responses.GET, f"{base}/worker/invoice/inv-rec/payload",
-                      json=SAMPLE_PAYLOAD)
-        # Solo necesita email y FCM
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-rec/send-email",
-                      json={"status": "ok", "message_id": "msg-1"})
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-rec/send-fcm",
-                      json={"status": "ok", "sent": 1})
-
-        worker._process({"invoice_id": "inv-rec"})
-
-        # No debe haber importado ni renderizado (ya estaba hecho)
-        assert len(gestor.facturas) == 0
-        assert len(renderer.calls) == 0
-
-        # Pero si pidio email y FCM
-        api_paths = [c.request.path_url for c in responses.calls]
-        assert any("/send-email" in p for p in api_paths)
-        assert any("/send-fcm" in p for p in api_paths)
-
-    @responses.activate
-    def test_error_reported_on_failure(self, tmp_path):
+class TestResolveSubcuenta430:
+    def test_assigns_first_subcuenta(self, tmp_path):
         config = _make_config(tmp_path)
         gestor = MockGestor()
         worker = InvoiceWorker(config, gestor=gestor)
 
+        sub = worker._resolve_subcuenta_430(
+            gestor, "TEST01", "B12345678", 8,
+            tercero_id="t1", legal_name="Cliente",
+        )
+        assert sub == "43000001"
+        # Se reservo de verdad (no solo se calculo): queda en el maestro.
+        assert gestor.get_maestro_subcuenta_por_subcuenta("TEST01", "43000001")
+        assert gestor.advisory_lock_calls == ["TEST01"]
+
+    def test_assigns_next_sequential(self, tmp_path):
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        # Preexisting subcuenta
+        gestor.subcuentas.append({
+            "codigo_empresa": "TEST01",
+            "subcuenta": "43000005",
+            "tipo_subcuenta": "cliente",
+            "nif_snapshot": "A11111111",
+        })
+        worker = InvoiceWorker(config, gestor=gestor)
+
+        sub = worker._resolve_subcuenta_430(
+            gestor, "TEST01", "B12345678", 8,
+            tercero_id="t2", legal_name="Cliente",
+        )
+        assert sub == "43000006"
+
+    def test_finds_existing_by_nif_without_reinserting(self, tmp_path):
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        gestor.subcuentas.append({
+            "codigo_empresa": "TEST01",
+            "subcuenta": "43000003",
+            "tipo_subcuenta": "cliente",
+            "nif_snapshot": "B12345678",
+        })
+        worker = InvoiceWorker(config, gestor=gestor)
+
+        sub = worker._resolve_subcuenta_430(
+            gestor, "TEST01", "B12345678", 8,
+            tercero_id="t3", legal_name="Cliente",
+        )
+        assert sub == "43000003"  # reutiliza la existente
+        assert len(gestor.subcuentas) == 1  # no inserta una segunda fila
+
+    def test_retries_on_unique_constraint_conflict(self, tmp_path):
+        """Seccion 17: UNIQUE(codigo_empresa, subcuenta) + reintento controlado.
+
+        Simula que, entre el calculo del siguiente numero y el INSERT, otro
+        proceso gano la carrera: el primer intento falla por el conflicto
+        simulado, el worker reintenta y obtiene una subcuenta distinta.
+        """
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        gestor.force_conflicts_remaining = 1
+        worker = InvoiceWorker(config, gestor=gestor)
+
+        sub = worker._resolve_subcuenta_430(
+            gestor, "TEST01", "B12345678", 8,
+            tercero_id="t4", legal_name="Cliente",
+        )
+        assert sub == "43000001"
+        assert len(gestor.advisory_lock_calls) == 2  # un intento fallido + uno exitoso
+        assert gestor.get_maestro_subcuenta_por_subcuenta("TEST01", "43000001")
+
+    def test_gives_up_after_max_attempts(self, tmp_path):
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        gestor.force_conflicts_remaining = 999  # siempre falla
+        worker = InvoiceWorker(config, gestor=gestor)
+
+        with pytest.raises(RuntimeError, match="No se pudo asignar"):
+            worker._resolve_subcuenta_430(
+                gestor, "TEST01", "B12345678", 8,
+                tercero_id="t5", legal_name="Cliente",
+            )
+
+    def test_never_reuses_subcuenta_of_another_tercero(self, tmp_path):
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        gestor.subcuentas.append({
+            "codigo_empresa": "TEST01",
+            "subcuenta": "43000001",
+            "tipo_subcuenta": "cliente",
+            "nif_snapshot": "A99999999",  # otro NIF
+        })
+        worker = InvoiceWorker(config, gestor=gestor)
+
+        sub = worker._resolve_subcuenta_430(
+            gestor, "TEST01", "B12345678", 8,
+            tercero_id="t6", legal_name="Cliente",
+        )
+        assert sub == "43000002"  # nunca devuelve 43000001, que es de otro tercero
+
+
+class TestAccountingProcess:
+    """Flujo de la cola contable: claim -> import -> confirm."""
+
+    @responses.activate
+    def test_full_flow_confirms_with_desktop_references(self, tmp_path):
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        worker = InvoiceWorker(config, gestor=gestor)
         base = config.api_base_url
 
-        # Status
-        responses.add(responses.GET, f"{base}/worker/invoice/inv-err/status",
-                      json={})
-        # Payload con empresa que no existe -> error en _import_to_desktop
+        payload = _payload_with_synced_customer(worker, gestor)
+
+        responses.add(
+            responses.POST, f"{base}/worker/accounting/inv-full/confirm",
+            json={"status": "ok"},
+        )
+
+        worker._process_accounting({"invoice_id": "inv-full", "payload": payload})
+
+        assert "flutter_inv-full" in gestor.facturas
+        assert len(responses.calls) == 1
+        body = json.loads(responses.calls[0].request.body)
+        assert body["desktop_invoice_ref"] == "flutter_inv-full"
+        assert body["desktop_tercero_id"] == payload["customer"]["desktop_tercero_id"]
+        assert body["desktop_subcuenta"] == payload["customer"]["desktop_subcuenta"]
+
+    @responses.activate
+    def test_error_reported_without_touching_fiscal_state(self, tmp_path):
+        """Un fallo contable se reporta pero nunca afecta a la factura fiscal."""
+        config = _make_config(tmp_path)
+        gestor = MockGestor()
+        worker = InvoiceWorker(config, gestor=gestor)
+        base = config.api_base_url
+
         bad_payload = {
             **SAMPLE_PAYLOAD,
             "organization": {**SAMPLE_PAYLOAD["organization"], "company_code": "NOPE"},
         }
-        responses.add(responses.GET, f"{base}/worker/invoice/inv-err/payload",
-                      json=bad_payload)
-        responses.add(responses.POST, f"{base}/worker/invoice/inv-err/error",
-                      json={"status": "ok"})
+        responses.add(
+            responses.POST, f"{base}/worker/accounting/inv-err/error",
+            json={"status": "ok", "retryable": True},
+        )
 
-        worker._process({"invoice_id": "inv-err"})
+        worker._process_accounting({"invoice_id": "inv-err", "payload": bad_payload})
 
-        # Error reported
         error_calls = [c for c in responses.calls if "/error" in c.request.path_url]
         assert len(error_calls) == 1
         body = json.loads(error_calls[0].request.body)
         assert "no existe en escritorio" in body["error"]
+        assert len(gestor.facturas) == 0
 
-
-class TestClaim:
     @responses.activate
-    def test_claim_returns_data(self, tmp_path):
+    def test_claim_accounting_returns_claim_with_payload(self, tmp_path):
         config = _make_config(tmp_path)
         worker = InvoiceWorker(config)
 
         responses.add(
-            responses.POST, f"{config.api_base_url}/worker/claim",
-            json={"claimed": True, "invoice_id": "inv-42"},
+            responses.POST, f"{config.api_base_url}/worker/accounting/claim",
+            json={"claimed": True, "invoice_id": "inv-42", "payload": SAMPLE_PAYLOAD},
         )
-        result = worker._claim()
-        assert result == {"claimed": True, "invoice_id": "inv-42"}
+        result = worker._claim_accounting()
+        assert result["invoice_id"] == "inv-42"
+        assert result["payload"]["invoice"]["series_code"] == "WEB"
 
     @responses.activate
-    def test_claim_returns_none_when_empty(self, tmp_path):
+    def test_claim_accounting_returns_none_when_empty(self, tmp_path):
         config = _make_config(tmp_path)
         worker = InvoiceWorker(config)
 
         responses.add(
-            responses.POST, f"{config.api_base_url}/worker/claim",
+            responses.POST, f"{config.api_base_url}/worker/accounting/claim",
             json={"claimed": False},
         )
-        result = worker._claim()
+        result = worker._claim_accounting()
         assert result is None
+
+
+class TestHeartbeat:
+    @responses.activate
+    def test_heartbeat_posts_instance_id(self, tmp_path):
+        config = _make_config(tmp_path)
+        worker = InvoiceWorker(config)
+
+        responses.add(
+            responses.POST, f"{config.api_base_url}/worker/accounting/heartbeat",
+            json={"status": "ok"},
+        )
+        worker._heartbeat()
+        assert len(responses.calls) == 1
+        body = json.loads(responses.calls[0].request.body)
+        assert body["instance_id"] == "test-worker-1"
+
+    def test_heartbeat_failure_never_raises(self, tmp_path):
+        """El backend puede estar caido; el heartbeat es best-effort."""
+        config = _make_config(tmp_path)
+        worker = InvoiceWorker(config)
+        worker._heartbeat()  # sin mock de red: debe fallar la conexion y no lanzar
 
 
 class TestGracefulShutdown:
@@ -661,7 +588,6 @@ class TestGracefulShutdown:
 
 
 class TestBackoff:
-    @responses.activate
     def test_consecutive_errors_increase_backoff(self, tmp_path):
         config = _make_config(tmp_path)
         worker = InvoiceWorker(config)
@@ -672,3 +598,33 @@ class TestBackoff:
         # Backoff seria poll_interval * 2^3 = 5 * 8 = 40
         expected = min(5 * (2 ** 3), 300)
         assert expected == 40
+
+
+class TestNoWindowsOrBillingWorkerLeakage:
+    """Seccion 16 del encargo: el circuito APP ya no usa Word/Word COM/PDF."""
+
+    def test_worker_module_never_imports_word_or_pdf_modules(self):
+        import ast
+        from pathlib import Path as _Path
+
+        source = (_Path(__file__).resolve().parents[1] / "invoice_worker" / "worker.py").read_text(
+            encoding="utf-8",
+        )
+        tree = ast.parse(source)
+        roots: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                roots.add(node.module.split(".")[0])
+        assert "procesos" not in roots  # procesos.facturas_word ya no se usa aqui
+        assert "win32com" not in roots
+        assert "comtypes" not in roots
+
+    def test_worker_has_no_pdf_or_email_or_fcm_methods(self):
+        forbidden = {
+            "_render_pdf", "_upload_pdf", "_publish_document",
+            "_request_email", "_request_fcm",
+        }
+        present = forbidden & set(dir(InvoiceWorker))
+        assert present == set(), f"metodos de billing_worker filtrados a invoice_worker: {present}"
